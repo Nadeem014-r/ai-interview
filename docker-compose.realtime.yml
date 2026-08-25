@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  realtime-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.realtime
+    container_name: ai_interviewer_realtime
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - REALTIME_USE_REDIS=true
+      - REALTIME_STORAGE_PATH=/app/data/storage
+      - SECRET_KEY=${SECRET_KEY:-default_insecure_development_secret_key_for_testing_only_12345}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    volumes:
+      - realtime_data:/app/data/storage
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai_interviewer_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+
+volumes:
+  realtime_data:
+  redis_data:

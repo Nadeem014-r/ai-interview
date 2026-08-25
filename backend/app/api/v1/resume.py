@@ -1,0 +1,200 @@
+import os
+import uuid
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
+from app.core.database import get_db
+from app.core.security import get_current_user_payload
+from app.core.config import settings
+from app.db.models import Resume, ResumeProfile, CandidateProfile
+from app.schemas.resume import ResumeOut, ResumeProfileUpdate
+from app.resume.validator import ResumeValidator
+from app.resume.parser import ResumeParser
+
+router = APIRouter(prefix="/resume", tags=["Resume Intelligence"])
+
+@router.post("/upload", response_model=ResumeOut, status_code=status.HTTP_201_CREATED)
+async def upload_resume(
+    file: UploadFile = File(...),
+    payload: dict = Depends(get_current_user_payload),
+    db: AsyncSession = Depends(get_db)
+):
+    user_id = payload["user_id"]
+    
+    # Read file content into memory
+    try:
+        file_bytes = await file.read()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to read uploaded file."
+        )
+
+    # Validate file extension, MIME type, size, and header signature
+    ext = ResumeValidator.validate_upload(file, file_bytes)
+
+    # Generate a safe, unique filename in a user-scoped storage directory
+    safe_id = uuid.uuid4().hex
+    safe_filename = f"{safe_id}{ext}"
+    user_upload_dir = os.path.join(settings.UPLOAD_DIR, f"user_{user_id}")
+    os.makedirs(user_upload_dir, exist_ok=True)
+    file_path = os.path.join(user_upload_dir, safe_filename)
+
+    file_written = False
+    try:
+        with open(file_path, "wb") as f:
+            f.write(file_bytes)
+        file_written = True
+
+        # Extract text & parse resume intelligence
+        raw_text = ResumeParser.extract_text_from_bytes(file_bytes, file.filename or f"resume{ext}")
+        parsed_json = await ResumeParser.parse_resume_content(raw_text)
+
+        # Sanitize display filename for database record (strip any directory components)
+        display_name = os.path.basename(file.filename or f"resume{ext}")
+
+        new_resume = Resume(
+            user_id=user_id,
+            filename=display_name,
+            file_path=file_path,
+            file_size=len(file_bytes),
+            mime_type=file.content_type or "application/octet-stream"
+        )
+        db.add(new_resume)
+        await db.flush()
+
+        new_profile = ResumeProfile(
+            resume_id=new_resume.id,
+            raw_text=raw_text,
+            explicit_facts=parsed_json.get("explicit_facts", {}),
+            model_inferred=parsed_json.get("model_inferred", {}),
+            skills=parsed_json.get("skills", []),
+            projects=parsed_json.get("projects", []),
+            education=parsed_json.get("education", []),
+            experience=parsed_json.get("experience", []),
+            technologies=parsed_json.get("technologies", [])
+        )
+        db.add(new_profile)
+
+        # Synchronize with CandidateProfile without overwriting existing candidate manual data
+        stmt_prof = select(CandidateProfile).where(CandidateProfile.user_id == user_id)
+        res_prof = await db.execute(stmt_prof)
+        cand_prof = res_prof.scalars().first()
+
+        if cand_prof:
+            if not cand_prof.skills and new_profile.skills:
+                cand_prof.skills = list(new_profile.skills)
+            if not cand_prof.projects and new_profile.projects:
+                cand_prof.projects = list(new_profile.projects)
+            if new_profile.education and len(new_profile.education) > 0:
+                first_edu = new_profile.education[0]
+                if not cand_prof.university and first_edu.get("institution"):
+                    cand_prof.university = first_edu.get("institution")
+                if not cand_prof.degree and first_edu.get("degree"):
+                    cand_prof.degree = first_edu.get("degree")
+            if not cand_prof.phone and new_profile.explicit_facts.get("phone"):
+                cand_prof.phone = new_profile.explicit_facts.get("phone")
+
+        await db.commit()
+        await db.refresh(new_resume)
+
+        # Re-fetch full resume with resume_profile relationship loaded
+        stmt = select(Resume).options(selectinload(Resume.resume_profile)).where(Resume.id == new_resume.id)
+        res = await db.execute(stmt)
+        return res.scalars().first()
+
+    except HTTPException:
+        await db.rollback()
+        if file_written and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+        raise
+    except Exception as e:
+        await db.rollback()
+        if file_written and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while processing the resume: {str(e)}"
+        )
+
+@router.get("", response_model=list[ResumeOut])
+async def get_my_resumes(
+    payload: dict = Depends(get_current_user_payload),
+    db: AsyncSession = Depends(get_db)
+):
+    user_id = payload["user_id"]
+    stmt = (
+        select(Resume)
+        .options(selectinload(Resume.resume_profile))
+        .where(Resume.user_id == user_id)
+        .order_by(Resume.created_at.desc())
+    )
+    res = await db.execute(stmt)
+    return res.scalars().all()
+
+@router.get("/{resume_id}", response_model=ResumeOut)
+async def get_resume_by_id(
+    resume_id: int,
+    payload: dict = Depends(get_current_user_payload),
+    db: AsyncSession = Depends(get_db)
+):
+    user_id = payload["user_id"]
+    stmt = (
+        select(Resume)
+        .options(selectinload(Resume.resume_profile))
+        .where(Resume.id == resume_id, Resume.user_id == user_id)
+    )
+    res = await db.execute(stmt)
+    resume = res.scalars().first()
+    if not resume:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resume not found or unauthorized access."
+        )
+    return resume
+
+@router.put("/{resume_id}/profile", response_model=ResumeOut)
+async def update_parsed_resume_profile(
+    resume_id: int,
+    update_in: ResumeProfileUpdate,
+    payload: dict = Depends(get_current_user_payload),
+    db: AsyncSession = Depends(get_db)
+):
+    user_id = payload["user_id"]
+    stmt = (
+        select(Resume)
+        .options(selectinload(Resume.resume_profile))
+        .where(Resume.id == resume_id, Resume.user_id == user_id)
+    )
+    res = await db.execute(stmt)
+    resume = res.scalars().first()
+    if not resume or not resume.resume_profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resume or parsed profile not found or unauthorized access."
+        )
+
+    prof = resume.resume_profile
+    data = update_in.model_dump(exclude_unset=True)
+    for field, val in data.items():
+        if val is not None and hasattr(prof, field):
+            setattr(prof, field, val)
+
+    await db.commit()
+    
+    # Reload updated resume with profile
+    stmt = (
+        select(Resume)
+        .options(selectinload(Resume.resume_profile))
+        .where(Resume.id == resume_id)
+    )
+    res = await db.execute(stmt)
+    return res.scalars().first()

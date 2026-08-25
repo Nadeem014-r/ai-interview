@@ -1,0 +1,52 @@
+# Phase 10C: Multi-Stage Production Dockerfile
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install python wheels
+COPY backend/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Final minimal runtime stage
+FROM python:3.11-slim AS runner
+
+WORKDIR /app
+
+# Create non-root user and group
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+
+# Copy installed wheels from builder
+COPY --from=builder /root/.local /home/appuser/.local
+ENV PATH=/home/appuser/.local/bin:$PATH
+
+# Copy application source
+COPY --chown=appuser:appuser backend/app /app/app
+
+# Set production environment defaults
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    ENVIRONMENT=production \
+    STORAGE_LOCAL_PATH=/app/data/storage \
+    PORT=8000
+
+# Create writable storage directory for non-root user
+RUN mkdir -p /app/data/storage && chown -R appuser:appuser /app/data
+
+# Switch to non-root user
+USER appuser
+
+# Expose port
+EXPOSE 8000
+
+# Container healthcheck
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')" || exit 1
+
+# Start production ASGI server with multiple workers
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--ws", "websockets"]
