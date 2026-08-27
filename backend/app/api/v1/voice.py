@@ -16,4 +16,24 @@ async def transcribe_speech(file: UploadFile = File(...)):
 @router.post("/tts")
 async def synthesize_text(req: VoiceSynthesizeRequest):
     audio_bytes = await TextToSpeechService.synthesize(req.text, voice_id=req.voice_id or "default")
-    return StreamingResponse(io.BytesIO(audio_bytes), media_type="audio/wav")
+    
+    # Detect audio format from magic bytes
+    if audio_bytes.startswith(b"ID3") or (len(audio_bytes) > 1 and audio_bytes[0] == 0xFF and (audio_bytes[1] & 0xE0) == 0xE0):
+        media_type = "audio/mpeg"
+    elif audio_bytes.startswith(b"RIFF") and len(audio_bytes) >= 12 and audio_bytes[8:12] == b"WAVE":
+        media_type = "audio/wav"
+    elif audio_bytes.startswith(b"OggS"):
+        media_type = "audio/ogg"
+    elif audio_bytes.startswith(b"\x1a\x45\xdf\xa3"):
+        media_type = "audio/webm"
+    else:
+        media_type = "audio/mpeg"
+
+    return Response(
+        content=audio_bytes,
+        media_type=media_type,
+        headers={
+            "Content-Length": str(len(audio_bytes)),
+            "Accept-Ranges": "bytes",
+        }
+    )

@@ -6,10 +6,11 @@ import { Navbar } from "@/components/Navbar";
 import { InterviewTimer } from "@/components/InterviewTimer";
 import { AudioRecorder } from "@/components/AudioRecorder";
 import { VideoInteractionRoom } from "@/components/VideoInteractionRoom";
-import { MonacoCodingRoom } from "@/components/MonacoCodingRoom";
+import { VoiceInterviewRoom } from "@/components/VoiceInterviewRoom";
 import { apiRequest } from "@/lib/api";
+import { requireAuth } from "@/lib/auth";
 import { InterviewSession, AnswerTurnResponse, Question } from "@/types";
-import { Send, CheckCircle2, AlertCircle, Award, Sparkles, FileText, ChevronDown, ChevronUp } from "lucide-react";
+import { Send, CheckCircle2, FileText, ChevronDown, ChevronUp, Sparkles } from "lucide-react";
 
 export default function InterviewRoomPage() {
   const params = useParams();
@@ -25,6 +26,7 @@ export default function InterviewRoomPage() {
   const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
+    if (!requireAuth(router)) return;
     async function loadInterviewSession() {
       try {
         const data: InterviewSession = await apiRequest(`/interviews/${interviewId}`);
@@ -93,8 +95,8 @@ export default function InterviewRoomPage() {
 
   if (loading || !session) {
     return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ color: "var(--text-secondary)" }}>Loading Adaptive Interview Session #{interviewId}...</p>
+      <div style={{ minHeight: "100vh", backgroundColor: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <p style={{ color: "#64748b" }}>Loading Adaptive Interview Session #{interviewId}...</p>
       </div>
     );
   }
@@ -102,122 +104,148 @@ export default function InterviewRoomPage() {
   const qText = currentQuestion?.question_text || "Please provide your detailed answer regarding this technical topic.";
   const currentTopic = session.state?.current_topic || "Core Technical";
   const stage = session.state?.interview_stage || "core";
+  const isVoiceMode = session.mode === "voice" || session.mode === "audio";
 
   return (
-    <div style={{ minHeight: "100vh" }}>
+    <div style={{ minHeight: "100vh", backgroundColor: "#f8fafc" }}>
       <Navbar />
 
-      <div style={{ maxWidth: "1000px", margin: "0 auto", padding: "2rem 1.5rem" }}>
+      <main style={{ maxWidth: "1000px", margin: "0 auto", padding: "2rem 1.5rem" }}>
         {/* Authoritative Header */}
-        <div className="glass-card" style={{ padding: "1.25rem 1.5rem", marginBottom: "1.5rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+        <div className="saas-card" style={{ padding: "1rem 1.5rem", backgroundColor: "#ffffff", borderRadius: "14px", border: "1px solid #e2e8f0", marginBottom: "1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.75rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
             <span className="badge badge-primary" style={{ textTransform: "capitalize" }}>{session.company_name || "Company"} • {session.role_title || "Role"}</span>
             <span className="badge badge-primary" style={{ textTransform: "capitalize" }}>{session.interview_type || "Technical"} ({session.mode})</span>
             <span className="badge badge-success">Stage: {stage}</span>
             <span className="badge badge-warning">Topic: {currentTopic}</span>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
             <InterviewTimer initialRemainingSeconds={session.state?.time_remaining_seconds || 1800} onExpire={() => router.push(`/reports/${interviewId}`)} />
-            <button onClick={handleFinishEarly} className="btn btn-secondary" style={{ padding: "0.4rem 0.8rem", fontSize: "0.8rem", color: "var(--accent-rose)" }}>
+            <button onClick={handleFinishEarly} className="btn btn-outline-danger" style={{ padding: "0.35rem 0.75rem", fontSize: "0.8rem" }}>
               Finish Session
             </button>
           </div>
         </div>
 
-        {/* Video interaction room if mode === video */}
-        {session.mode === "video" && (
-          <VideoInteractionRoom currentQuestionText={qText} />
-        )}
-
-        {/* Active Question Box */}
-        <div className="glass-card" style={{ padding: "2rem", marginBottom: "1.5rem" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Question #{ (session.state?.questions_asked_count || 0) + 1 } • Difficulty: <strong style={{ color: "var(--accent-cyan)", textTransform: "capitalize" }}>{session.state?.difficulty || "medium"}</strong>
-            </span>
-            <span className="badge badge-primary" style={{ textTransform: "capitalize" }}>{currentQuestion?.question_type || "Technical"}</span>
-          </div>
-
-          <h2 style={{ fontSize: "1.35rem", marginTop: "0.75rem", lineHeight: 1.5 }}>
-            {qText}
-          </h2>
-
-          {currentQuestion?.expected_concepts && currentQuestion.expected_concepts.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "1rem" }}>
-              {currentQuestion.expected_concepts.map((c) => (
-                <span key={c} className="badge badge-primary" style={{ fontSize: "0.75rem" }}>Key Focus: {c}</span>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Realtime Last Turn Evaluation Feedback Display */}
-        {lastTurnResponse && lastTurnResponse.evaluation && (
-          <div className="glass-card" style={{ padding: "1.5rem", marginBottom: "1.5rem", background: "rgba(16, 185, 129, 0.08)", borderColor: "rgba(16, 185, 129, 0.3)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "#6ee7b7", marginBottom: "0.5rem" }}>
-              <CheckCircle2 size={18} />
-              <strong>Turn Evaluation: {lastTurnResponse.evaluation.overall_question_score} / 10</strong>
-            </div>
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", lineHeight: 1.5 }}>
-              {lastTurnResponse.evaluation.feedback_text}
-            </p>
-          </div>
-        )}
-
-        {/* Audio Recording Interface if mode === audio */}
-        {session.mode === "audio" && (
-          <div style={{ marginBottom: "1.5rem" }}>
-            <AudioRecorder onTranscriptReceived={(t, url) => { setAnswerText(t); handleSubmitAnswer(t, url); }} />
-          </div>
-        )}
-
-        {/* Answer Input Box */}
-        <div className="glass-card" style={{ padding: "1.5rem", marginBottom: "1.5rem" }}>
-          <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>
-            Your Answer / Rationale:
-          </label>
-          <textarea
-            value={answerText}
-            onChange={(e) => setAnswerText(e.target.value)}
-            rows={5}
-            className="form-input"
-            placeholder="Type your technical answer here in detail..."
-            style={{ marginBottom: "1rem" }}
+        {/* VIDEO MODE (Production-Grade Realtime Video Interview Room) */}
+        {session.mode === "video" ? (
+          <VideoInteractionRoom
+            interviewId={Number(interviewId)}
+            currentQuestionText={qText}
+            questionNumber={(session.state?.questions_asked_count || 0) + 1}
+            difficulty={session.state?.difficulty || "medium"}
+            questionType={currentQuestion?.question_type || "Technical"}
+            expectedConcepts={currentQuestion?.expected_concepts || []}
+            lastEvaluation={lastTurnResponse?.evaluation}
+            onAnswerSubmitted={async (transcript, audioUrl) => {
+              await handleSubmitAnswer(transcript, audioUrl);
+            }}
+            submitting={submitting}
+            companyName={session.company_name}
+            roleTitle={session.role_title}
           />
+        ) : isVoiceMode ? (
+          /* VOICE-TO-VOICE MODE (Pure Voice Interaction Room) */
+          <VoiceInterviewRoom
+            interviewId={Number(interviewId)}
+            currentQuestionText={qText}
+            questionNumber={(session.state?.questions_asked_count || 0) + 1}
+            difficulty={session.state?.difficulty || "medium"}
+            questionType={currentQuestion?.question_type || "Technical"}
+            expectedConcepts={currentQuestion?.expected_concepts || []}
+            lastEvaluation={lastTurnResponse?.evaluation}
+            onAnswerSubmitted={async (transcript, audioUrl) => {
+              await handleSubmitAnswer(transcript, audioUrl);
+            }}
+            submitting={submitting}
+          />
+        ) : (
+          /* TEXT MODE */
+          <>
+            {/* Active Question Box */}
+            <div className="saas-card" style={{ padding: "2rem", backgroundColor: "#ffffff", borderRadius: "16px", border: "1px solid #e2e8f0", marginBottom: "1.25rem", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "0.8rem", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>
+                  Question #{ (session.state?.questions_asked_count || 0) + 1 } • Difficulty: <strong style={{ color: "#4f46e5", textTransform: "capitalize" }}>{session.state?.difficulty || "medium"}</strong>
+                </span>
+                <span className="badge badge-primary" style={{ textTransform: "capitalize" }}>{currentQuestion?.question_type || "Technical"}</span>
+              </div>
 
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button onClick={() => handleSubmitAnswer()} disabled={submitting || !answerText.trim()} className="btn btn-primary" style={{ padding: "0.75rem 1.5rem" }}>
-              <Send size={18} /> {submitting ? "Evaluating..." : "Submit Answer Turn"}
-            </button>
-          </div>
-        </div>
+              <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "#0f172a", marginTop: "0.75rem", lineHeight: 1.5 }}>
+                {qText}
+              </h2>
+
+              {currentQuestion?.expected_concepts && currentQuestion.expected_concepts.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "1rem" }}>
+                  {currentQuestion.expected_concepts.map((c) => (
+                    <span key={c} className="badge badge-primary" style={{ fontSize: "0.75rem" }}>Focus: {c}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Realtime Last Turn Evaluation Feedback Display */}
+            {lastTurnResponse && lastTurnResponse.evaluation && (
+              <div className="saas-card" style={{ padding: "1.25rem", marginBottom: "1.25rem", backgroundColor: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: "12px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "#047857", marginBottom: "0.35rem" }}>
+                  <CheckCircle2 size={18} />
+                  <strong style={{ fontSize: "0.95rem" }}>Turn Evaluation: {lastTurnResponse.evaluation.overall_question_score} / 10</strong>
+                </div>
+                <p style={{ color: "#334155", fontSize: "0.88rem", lineHeight: 1.5 }}>
+                  {lastTurnResponse.evaluation.feedback_text}
+                </p>
+              </div>
+            )}
+
+            {/* Text Mode Answer Input Box */}
+            <div className="saas-card" style={{ padding: "1.5rem", backgroundColor: "#ffffff", borderRadius: "16px", border: "1px solid #e2e8f0", marginBottom: "1.25rem", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+              <label style={{ display: "block", fontSize: "0.85rem", fontWeight: 600, color: "#334155", marginBottom: "0.5rem" }}>
+                Your Answer / Technical Rationale:
+              </label>
+              <textarea
+                value={answerText}
+                onChange={(e) => setAnswerText(e.target.value)}
+                rows={5}
+                className="form-input"
+                placeholder="Type your technical answer here in detail..."
+                style={{ marginBottom: "1rem" }}
+              />
+
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button onClick={() => handleSubmitAnswer()} disabled={submitting || !answerText.trim()} className="btn btn-primary" style={{ padding: "0.75rem 1.5rem" }}>
+                  <Send size={16} /> {submitting ? "Evaluating..." : "Submit Answer Turn"}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
 
         {/* Past Answered Turns in Session */}
         {session.answers && session.answers.length > 0 && (
-          <div className="glass-card" style={{ padding: "1.5rem" }}>
+          <div className="saas-card" style={{ padding: "1.5rem", backgroundColor: "#ffffff", borderRadius: "14px", border: "1px solid #e2e8f0" }}>
             <div
               onClick={() => setShowHistory(!showHistory)}
               style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
             >
-              <h4 style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <FileText size={18} color="var(--primary)" /> Answered Questions in this Session ({session.answers.length})
-              </h4>
-              {showHistory ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+              <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "0.45rem" }}>
+                <FileText size={18} color="#4f46e5" /> Answered Questions in this Session ({session.answers.length})
+              </h3>
+              {showHistory ? <ChevronUp size={18} color="#64748b" /> : <ChevronDown size={18} color="#64748b" />}
             </div>
 
             {showHistory && (
-              <div style={{ display: "flex", flexDirection: "column", gap: "1rem", marginTop: "1.25rem" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem", marginTop: "1rem" }}>
                 {session.answers.map((a, idx) => (
-                  <div key={a.id} style={{ background: "rgba(0,0,0,0.3)", padding: "1rem", borderRadius: "var(--radius-md)" }}>
-                    <div style={{ fontWeight: 600, fontSize: "0.9rem", color: "var(--text-primary)", marginBottom: "0.3rem" }}>
+                  <div key={a.id} style={{ backgroundColor: "#f8fafc", padding: "1rem", borderRadius: "10px", border: "1px solid #f1f5f9" }}>
+                    <div style={{ fontWeight: 600, fontSize: "0.9rem", color: "#0f172a", marginBottom: "0.25rem" }}>
                       Q{idx + 1}: {a.question_text}
                     </div>
-                    <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", margin: "0.4rem 0" }}>
+                    <p style={{ fontSize: "0.85rem", color: "#475569", margin: "0.35rem 0" }}>
                       <strong>Your Answer:</strong> {a.candidate_answer_text}
                     </p>
                     {a.evaluation && (
-                      <div style={{ fontSize: "0.8rem", color: "#6ee7b7", marginTop: "0.4rem" }}>
+                      <div style={{ fontSize: "0.8rem", color: "#047857", marginTop: "0.35rem", fontWeight: 600 }}>
                         Score: {a.evaluation.overall_question_score}/10 • Feedback: {a.evaluation.feedback_text}
                       </div>
                     )}
@@ -227,8 +255,7 @@ export default function InterviewRoomPage() {
             )}
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 }
-

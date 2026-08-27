@@ -72,6 +72,20 @@ async def get_all_job_matches(
         if not candidate_projects and cand_profile.projects:
             candidate_projects = cand_profile.projects
 
+    # If the candidate has no active resume and no profile skills, return []
+    has_active_resume = bool(
+        latest_resume
+        and latest_resume.resume_profile
+        and (
+            latest_resume.resume_profile.skills
+            or latest_resume.resume_profile.raw_text
+        )
+    )
+    has_profile_skills = bool(cand_profile and cand_profile.skills)
+
+    if not has_active_resume and not has_profile_skills:
+        return []
+
     # 2. Fetch all roles across all companies
     stmt_roles = select(Role).options(selectinload(Role.company))
     res_roles = await db.execute(stmt_roles)

@@ -19,7 +19,7 @@ logger = logging.getLogger("ai_interviewer.ai.router")
 
 
 class RoutedLLMProvider(LLMProvider):
-    """LLM Provider wrapper that handles primary provider routing and automatic fallback."""
+    """LLM Provider wrapper that handles primary provider routing, automatic fallback, and observability."""
 
     def __init__(
         self,
@@ -30,6 +30,8 @@ class RoutedLLMProvider(LLMProvider):
         self.primary = primary_provider
         self.fallback = fallback_provider
         self.enable_fallback = enable_fallback
+        self.last_provider_used: str = getattr(primary_provider, "provider_name", type(primary_provider).__name__)
+        self.last_fallback_reason: Optional[str] = None
 
     async def generate_text(
         self,
@@ -41,7 +43,7 @@ class RoutedLLMProvider(LLMProvider):
         **kwargs: Any
     ) -> str:
         try:
-            return await self.primary.generate_text(
+            res = await self.primary.generate_text(
                 prompt=prompt,
                 system_prompt=system_prompt,
                 temperature=temperature,
@@ -49,12 +51,17 @@ class RoutedLLMProvider(LLMProvider):
                 model=model,
                 **kwargs
             )
+            self.last_provider_used = "gemini" if "gemini" in type(self.primary).__name__.lower() else ("openai" if "openai" in type(self.primary).__name__.lower() else "primary")
+            self.last_fallback_reason = None
+            return res
         except Exception as primary_err:
             if not self.enable_fallback or self.fallback is None:
                 raise primary_err
 
+            self.last_fallback_reason = str(primary_err)
+            self.last_provider_used = "mock" if "mock" in type(self.fallback).__name__.lower() else "fallback"
             logger.warning(
-                f"Primary LLM provider failed ({primary_err}). Triggering fallback provider...",
+                f"[AI_PROVIDER_FAILOVER] Primary LLM provider failed ({primary_err}). Activating fallback provider: '{self.last_provider_used}'.",
                 exc_info=False
             )
             try:
@@ -83,7 +90,7 @@ class RoutedLLMProvider(LLMProvider):
         **kwargs: Any
     ) -> Dict[str, Any]:
         try:
-            return await self.primary.generate_json(
+            res = await self.primary.generate_json(
                 prompt=prompt,
                 system_prompt=system_prompt,
                 schema=schema,
@@ -92,12 +99,17 @@ class RoutedLLMProvider(LLMProvider):
                 model=model,
                 **kwargs
             )
+            self.last_provider_used = "gemini" if "gemini" in type(self.primary).__name__.lower() else ("openai" if "openai" in type(self.primary).__name__.lower() else "primary")
+            self.last_fallback_reason = None
+            return res
         except Exception as primary_err:
             if not self.enable_fallback or self.fallback is None:
                 raise primary_err
 
+            self.last_fallback_reason = str(primary_err)
+            self.last_provider_used = "mock" if "mock" in type(self.fallback).__name__.lower() else "fallback"
             logger.warning(
-                f"Primary LLM generate_json failed ({primary_err}). Triggering fallback provider...",
+                f"[AI_PROVIDER_FAILOVER] Primary LLM generate_json failed ({primary_err}). Activating fallback provider: '{self.last_provider_used}'.",
                 exc_info=False
             )
             try:

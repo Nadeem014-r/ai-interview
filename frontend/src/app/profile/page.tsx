@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { Navbar } from "@/components/Navbar";
 import { apiRequest } from "@/lib/api";
 import { CandidateProfile } from "@/types";
-import { User, Save, CheckCircle2, GraduationCap, Code2, Briefcase, Phone, Mail } from "lucide-react";
+import { User, Save, CheckCircle2, GraduationCap, Code2 } from "lucide-react";
 
 export default function ProfilePage() {
   const [fullName, setFullName] = useState("");
@@ -89,9 +89,9 @@ export default function ProfilePage() {
 
   if (loading) {
     return (
-      <div style={{ minHeight: "100vh" }}>
+      <div style={{ minHeight: "100vh", backgroundColor: "#f8fafc" }}>
         <Navbar />
-        <div style={{ textAlign: "center", padding: "4rem", color: "var(--text-secondary)" }}>
+        <div style={{ textAlign: "center", padding: "4rem", color: "#64748b" }}>
           Loading candidate profile...
         </div>
       </div>
@@ -99,87 +99,89 @@ export default function ProfilePage() {
   }
 
   return (
-    <div style={{ minHeight: "100vh" }}>
+    <div style={{ minHeight: "100vh", backgroundColor: "#f8fafc" }}>
       <Navbar />
-      <div style={{ maxWidth: "850px", margin: "0 auto", padding: "2.5rem 1.5rem" }}>
-        <div className="glass-card" style={{ padding: "2.5rem" }}>
+      <main style={{ maxWidth: "850px", margin: "0 auto", padding: "2.5rem 1.5rem" }}>
+        <div className="saas-card" style={{ padding: "2.25rem", backgroundColor: "#ffffff", borderRadius: "16px", border: "1px solid #e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1.5rem" }}>
-            <User size={28} color="var(--primary)" />
+            <div style={{ backgroundColor: "#eef2ff", padding: "0.5rem", borderRadius: "10px", color: "#4f46e5" }}>
+              <User size={24} />
+            </div>
             <div>
-              <h2 style={{ margin: 0 }}>Candidate Profile & Placement Settings</h2>
-              <span style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Data is persisted in the authoritative PostgreSQL/SQLite database</span>
+              <h1 style={{ margin: 0, fontSize: "1.5rem", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.03em" }}>Candidate Profile & Placement Settings</h1>
+              <span style={{ fontSize: "0.85rem", color: "#64748b" }}>Information is persisted in the PostgreSQL/SQLite database</span>
             </div>
           </div>
 
           {saved && (
-            <div style={{ padding: "0.75rem 1rem", background: "rgba(16, 185, 129, 0.15)", border: "1px solid rgba(16, 185, 129, 0.3)", borderRadius: "var(--radius-md)", color: "#6ee7b7", fontSize: "0.85rem", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <div style={{ padding: "0.75rem 1rem", backgroundColor: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: "10px", color: "#047857", fontSize: "0.85rem", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
               <CheckCircle2 size={16} /> Candidate profile updated and persisted successfully!
             </div>
           )}
 
-          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
             {/* Personal Details */}
-            <div style={{ borderBottom: "1px solid var(--border-subtle)", paddingBottom: "1.25rem" }}>
-              <h4 style={{ fontSize: "1rem", color: "var(--accent-cyan)", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <User size={18} /> Personal & Contact Info
-              </h4>
+            <div style={{ borderBottom: "1px solid #f1f5f9", paddingBottom: "1.25rem" }}>
+              <h2 style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a", marginBottom: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                <User size={16} color="#4f46e5" /> Personal & Contact Info
+              </h2>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Full Name</label>
+                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Full Name</label>
                   <input type="text" required value={fullName} onChange={(e) => setFullName(e.target.value)} className="form-input" placeholder="Alex Mercer" />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Email Address</label>
-                  <input type="email" disabled value={email} className="form-input" style={{ opacity: 0.7, cursor: "not-allowed" }} />
+                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Email Address</label>
+                  <input type="email" disabled value={email} className="form-input" style={{ opacity: 0.7, cursor: "not-allowed", backgroundColor: "#f8fafc" }} />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Phone Number</label>
+                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Phone Number</label>
                   <input type="text" value={phone} onChange={(e) => setPhone(e.target.value)} className="form-input" placeholder="+1 (555) 019-2834" />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Professional Headline</label>
+                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Professional Headline</label>
                   <input type="text" value={headline} onChange={(e) => setHeadline(e.target.value)} className="form-input" placeholder="Aspiring Full-Stack & Systems Engineer" />
                 </div>
               </div>
             </div>
 
             {/* Academic & University Details */}
-            <div style={{ borderBottom: "1px solid var(--border-subtle)", paddingBottom: "1.25rem" }}>
-              <h4 style={{ fontSize: "1rem", color: "var(--primary)", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <GraduationCap size={18} /> Education & Academic Background
-              </h4>
+            <div style={{ borderBottom: "1px solid #f1f5f9", paddingBottom: "1.25rem" }}>
+              <h2 style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a", marginBottom: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                <GraduationCap size={16} color="#4f46e5" /> Education & Academic Background
+              </h2>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>University / College</label>
+                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>University / College</label>
                   <input type="text" value={university} onChange={(e) => setUniversity(e.target.value)} className="form-input" placeholder="National Institute of Technology" />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Degree</label>
+                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Degree</label>
                   <input type="text" value={degree} onChange={(e) => setDegree(e.target.value)} className="form-input" placeholder="B.Tech" />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Branch / Major</label>
+                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Branch / Major</label>
                   <input type="text" value={branch} onChange={(e) => setBranch(e.target.value)} className="form-input" placeholder="Computer Science & Engineering" />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Graduation Year</label>
+                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Graduation Year</label>
                   <input type="number" value={gradYear} onChange={(e) => setGradYear(e.target.value ? Number(e.target.value) : "")} className="form-input" placeholder="2025" />
                 </div>
               </div>
             </div>
 
             {/* Career & Skills */}
-            <div style={{ borderBottom: "1px solid var(--border-subtle)", paddingBottom: "1.25rem" }}>
-              <h4 style={{ fontSize: "1rem", color: "var(--accent-emerald)", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <Code2 size={18} /> Technical Skills & Target Role
-              </h4>
+            <div style={{ borderBottom: "1px solid #f1f5f9", paddingBottom: "1.25rem" }}>
+              <h2 style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a", marginBottom: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                <Code2 size={16} color="#059669" /> Technical Skills & Target Role
+              </h2>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Primary Target Role</label>
+                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Primary Target Role</label>
                   <input type="text" value={targetRole} onChange={(e) => setTargetRole(e.target.value)} className="form-input" placeholder="Software Engineer (Backend)" />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Target Seniority / Level</label>
+                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Target Seniority / Level</label>
                   <select value={level} onChange={(e) => setLevel(e.target.value)} className="form-input">
                     <option value="entry">Entry Level / Graduate (L3)</option>
                     <option value="mid">Mid Level Engineer (L4)</option>
@@ -189,7 +191,7 @@ export default function ProfilePage() {
               </div>
 
               <div>
-                <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>
+                <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>
                   Skills & Technologies (comma-separated)
                 </label>
                 <input
@@ -204,17 +206,16 @@ export default function ProfilePage() {
 
             {/* Bio */}
             <div>
-              <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Bio & Technical Summary</label>
+              <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Bio & Technical Summary</label>
               <textarea value={bio} onChange={(e) => setBio(e.target.value)} rows={3} className="form-input" placeholder="Brief summary of your background, areas of focus, and aspirations..." />
             </div>
 
-            <button type="submit" className="btn btn-primary" style={{ padding: "0.85rem", fontSize: "1rem", marginTop: "0.5rem" }}>
-              <Save size={18} /> Save & Persist Profile Changes
+            <button type="submit" className="btn btn-primary" style={{ padding: "0.8rem", fontSize: "0.95rem", marginTop: "0.5rem" }}>
+              <Save size={16} /> Save & Persist Profile Changes
             </button>
           </form>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
-

@@ -366,7 +366,7 @@ async def create_sample_rag_knowledge():
     """Setup test companies, roles, sources, docs, and vector chunks."""
     async with AsyncSessionLocal() as session:
         # Company A (Google)
-        comp_a = Company(name=f"Google_{uuid.uuid4().hex[:4]}", slug=f"goog_{uuid.uuid4().hex[:4]}")
+        comp_a = Company(name=f"Google_{uuid.uuid4().hex[:12]}", slug=f"goog_{uuid.uuid4().hex[:12]}")
         session.add(comp_a)
         await session.commit()
         await session.refresh(comp_a)
@@ -379,7 +379,7 @@ async def create_sample_rag_knowledge():
         await session.refresh(role_a2)
 
         # Company B (Meta)
-        comp_b = Company(name=f"Meta_{uuid.uuid4().hex[:4]}", slug=f"meta_{uuid.uuid4().hex[:4]}")
+        comp_b = Company(name=f"Meta_{uuid.uuid4().hex[:12]}", slug=f"meta_{uuid.uuid4().hex[:12]}")
         session.add(comp_b)
         await session.commit()
         await session.refresh(comp_b)

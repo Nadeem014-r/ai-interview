@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.security import get_current_user_payload
 from app.db.models import Company, Role
@@ -10,7 +11,7 @@ router = APIRouter(prefix="/companies", tags=["Companies & Roles"])
 
 @router.get("", response_model=list[CompanyOut])
 async def list_companies(db: AsyncSession = Depends(get_db)):
-    stmt = select(Company)
+    stmt = select(Company).options(selectinload(Company.roles))
     res = await db.execute(stmt)
     companies = res.scalars().all()
     
@@ -46,10 +47,12 @@ async def list_companies(db: AsyncSession = Depends(get_db)):
         r1 = Role(company_id=c1.id, title="Software Engineer (Backend)", level="Entry / L3", description="Build scalable distributed backend microservices.", required_skills=["Python", "FastAPI", "Data Structures", "System Design"], key_topics=["Data Structures", "Relational Databases", "Distributed Systems"], interview_categories=["Technical", "Behavioral"])
         r2 = Role(company_id=c2.id, title="Software Development Engineer (SDE-1)", level="L4 / Entry", description="Design high-performance e-commerce and cloud microservices.", required_skills=["Java", "Python", "SQL", "OOP"], key_topics=["Object-Oriented Design", "Concurrency", "Database Indexing"], interview_categories=["Coding", "Leadership Principles"])
         r3 = Role(company_id=c3.id, title="Cloud Backend Engineer", level="L59 / Graduate", description="Implement enterprise cloud microservices on Azure.", required_skills=["C#", "Python", "Docker", "REST APIs"], key_topics=["Cloud Microservices", "API Security", "Database Tuning"], interview_categories=["Technical", "System Architecture"])
-        db.add_all([r1, r2, r3])
+        r4 = Role(company_id=c1.id, title="Frontend Engineer (React / UI)", level="Entry / L3", description="Build interactive web interfaces and design systems.", required_skills=["React", "TypeScript", "JavaScript", "Next.js"], key_topics=["React Architecture", "State Management", "Web Performance"], interview_categories=["Technical", "UI Design"])
+        r5 = Role(company_id=c1.id, title="Machine Learning Engineer", level="Entry / L3", description="Develop and deploy machine learning and NLP pipelines.", required_skills=["Python", "PyTorch", "TensorFlow", "Machine Learning", "Pandas"], key_topics=["Model Optimization", "Deep Learning", "Feature Engineering"], interview_categories=["Technical", "ML Design"])
+        db.add_all([r1, r2, r3, r4, r5])
         await db.commit()
 
-        stmt = select(Company)
+        stmt = select(Company).options(selectinload(Company.roles))
         res = await db.execute(stmt)
         companies = res.scalars().all()
 

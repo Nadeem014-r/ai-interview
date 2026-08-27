@@ -1,7 +1,8 @@
-"""Phase 9: Question Selection, Grounded Generation & Duplicate Prevention.
+"""Phase 7/9: Question Selection, Grounded Generation & Semantic Repetition Prevention.
 
-Selects, validates, and generates high-quality, company- and role-tailored interview
-questions with strict duplicate prevention and deterministic fallbacks.
+Selects, validates, and generates high-quality, company-, role-, and resume-tailored
+interview questions with strict duplicate prevention, conversational transitions,
+and Structured Interview Memory integration.
 """
 
 import re
@@ -9,10 +10,11 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.db.models import Question
+from app.db.models import Question, Company, Role
 from app.rag.rag_engine import RAGEngine
 from app.ai.factory import AIFactory
-from app.ai.prompt_builder import SafePromptBuilder
+from app.interview.memory import InterviewMemory, MemoryManager
+from app.companies.strategy_engine import CompanyStrategyEngine
 
 
 HR_FALLBACK_QUESTIONS = [
@@ -56,7 +58,10 @@ def normalize_text_for_comparison(text: str) -> str:
 
 
 def is_duplicate_question(new_text: str, existing_texts: List[str]) -> bool:
-    """Check if new_text is an exact or near-duplicate of any existing asked question."""
+    """
+    Check if new_text is an exact or near-duplicate of any existing asked question.
+    Distinguishes legitimate follow-ups from semantic duplicates.
+    """
     norm_new = normalize_text_for_comparison(new_text)
     if not norm_new:
         return False
@@ -66,12 +71,18 @@ def is_duplicate_question(new_text: str, existing_texts: List[str]) -> bool:
         norm_ext = normalize_text_for_comparison(ext)
         if not norm_ext:
             continue
-        if norm_new == norm_ext or (len(norm_new) > 20 and norm_new in norm_ext) or (len(norm_ext) > 20 and norm_ext in norm_new):
+        # Exact match
+        if norm_new == norm_ext:
+            return True
+        # Exact substring containment for long questions
+        if len(norm_new) > 30 and norm_new in norm_ext:
+            return True
+        if len(norm_ext) > 30 and norm_ext in norm_new:
             return True
         set_ext = set(norm_ext.split())
         if set_new and set_ext:
             overlap = len(set_new.intersection(set_ext)) / float(max(len(set_new), len(set_ext)))
-            if overlap >= 0.70:
+            if overlap >= 0.72:
                 return True
     return False
 
@@ -95,7 +106,7 @@ def validate_question_data(data: Dict[str, Any], default_topic: str, default_dif
         diff = default_diff
 
     q_type = data.get("question_type", default_type)
-    if q_type not in ["technical", "conceptual", "coding", "behavioral", "hr", "resume"]:
+    if q_type not in ["technical", "conceptual", "coding", "behavioral", "hr", "resume", "database", "system_design"]:
         q_type = default_type
 
     return {
@@ -109,7 +120,7 @@ def validate_question_data(data: Dict[str, Any], default_topic: str, default_dif
 
 
 class QuestionSelector:
-    """Selects from pre-existing bank or generates validated grounded questions."""
+    """Selects from pre-existing bank or generates validated grounded questions with memory awareness."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -123,16 +134,19 @@ class QuestionSelector:
         difficulty: str,
         asked_question_ids: List[int],
         interview_type: str = "technical",
-        resume_context: Optional[str] = None
+        resume_context: Optional[str] = None,
+        previous_context: Optional[List[Dict[str, str]]] = None,
+        eval_dict: Optional[Dict[str, Any]] = None,
+        memory: Optional[InterviewMemory] = None,
+        candidate_level: str = "entry"
     ) -> Question:
         """
         Selects an existing matching question or generates a company/role/resume-tailored question.
         Priority:
-        1. Matching question bank item
-        2. Fallback unasked bank item
+        1. Dynamic AI generation grounded in RAG + Structured Memory + Resume Claims
+        2. Matching unasked question bank item
         3. Predefined behavioral/HR fallback
-        4. Grounded RAG + Resume AI generation
-        5. Safe deterministic fallback
+        4. Safe deterministic fallback
         """
         clean_type = (interview_type or "technical").lower()
         clean_diff = (difficulty or "medium").lower()
@@ -140,17 +154,149 @@ class QuestionSelector:
 
         # Fetch previously asked question texts for duplicate checking
         asked_texts: List[str] = []
-        if asked_question_ids:
+        if memory and memory.asked_question_texts:
+            asked_texts = list(memory.asked_question_texts)
+        elif asked_question_ids:
             stmt_asked = select(Question.question_text).where(Question.id.in_(asked_question_ids))
             res_asked = await self.db.execute(stmt_asked)
             asked_texts = [row[0] for row in res_asked.all()]
 
-        # Step 1: Query question bank for matching topic and type
+        # Step 1: Dynamic generation grounded in RAG + Memory Context
+        rag_context = ""
+        try:
+            rag_context = await self.rag_engine.get_relevant_context(
+                query=clean_topic,
+                company_id=company_id,
+                role_id=role_id
+            )
+        except Exception:
+            rag_context = "General engineering practices."
+
+        # Format structured memory context
+        memory_summary = ""
+        if memory:
+            memory_summary = MemoryManager.get_structured_llm_context(memory, max_recent_turns=3)
+        elif previous_context:
+            memory_summary = "\n".join([f"- Asked: {p.get('question', '')}\n  Candidate Answer: {p.get('answer', '')}" for p in previous_context[-2:]])
+
+        eval_summary = ""
+        if eval_dict:
+            missing = eval_dict.get("missing_concepts", [])
+            misconceptions = eval_dict.get("misconceptions", [])
+            if missing:
+                eval_summary += f"\nPREVIOUSLY MISSING CONCEPTS: {', '.join(missing)}"
+            if misconceptions:
+                eval_summary += f"\nDETECTED MISCONCEPTIONS: {', '.join(misconceptions)}"
+
+        # Compute Phase 9 Company & Role Strategy
+        company_slug = None
+        role_title = None
+        if company_id:
+            c_stmt = select(Company).where(Company.id == company_id)
+            c_res = await self.db.execute(c_stmt)
+            c_obj = c_res.scalars().first()
+            if c_obj:
+                company_slug = c_obj.slug or c_obj.name
+        if role_id:
+            r_stmt = select(Role).where(Role.id == role_id)
+            r_res = await self.db.execute(r_stmt)
+            r_obj = r_res.scalars().first()
+            if r_obj:
+                role_title = r_obj.title
+
+        strategy = CompanyStrategyEngine.compute_interview_strategy(
+            company_slug_or_name=company_slug,
+            role_title=role_title,
+            candidate_level=candidate_level or "entry",
+            memory=memory,
+            current_turn=len(asked_texts) + 1
+        )
+        company_profile = CompanyStrategyEngine.get_company_profile(company_slug)
+        role_profile = CompanyStrategyEngine.get_role_profile(role_title)
+
+        llm = AIFactory.get_llm_provider()
+        prompt = f"""
+You are an experienced technical interviewer at {company_profile.display_name} conducting a {clean_type} interview for a {candidate_level} {role_profile.display_name} position.
+
+COMPANY & INTERVIEW STYLE:
+- Company: {company_profile.display_name} ({company_profile.difficulty_profile})
+- Question Style: {company_profile.question_style}
+- Technical Depth: {company_profile.technical_depth}/10
+- Problem Solving Emphasis: {company_profile.problem_solving_emphasis}/10
+- Public Notes: {company_profile.public_pattern_notes}
+
+ROLE & COMPETENCY TARGET:
+- Role Family: {role_profile.display_name}
+- Target Topic/Competency: {clean_topic}
+- Role Architecture Focus: {role_profile.architecture_focus}
+- Core Technologies: {', '.join(role_profile.key_technologies)}
+
+CANDIDATE LEVEL & DESIRED DIFFICULTY:
+- Seniority: {candidate_level} (Difficulty: {strategy.desired_difficulty:.1f}/10)
+
+STRUCTURED INTERVIEW MEMORY & CONVERSATION HISTORY:
+{memory_summary or "Starting new topic exploration."}
+{eval_summary}
+
+PREVIOUSLY ASKED QUESTIONS (DO NOT DUPLICATE OR REPEAT):
+{asked_texts[-4:] if asked_texts else "None"}
+
+INSTRUCTIONS:
+1. Frame ONE clear, spoken question reflecting {company_profile.display_name}'s technical style and {role_profile.display_name}'s domain requirements.
+2. DO NOT use cold written-exam phrasing like "Question 3: Define..." or robotic templates.
+3. Focus on WHY, HOW, trade-offs, architecture, scalability, edge cases, and failure scenarios.
+4. Keep the question grounded in the target topic ({clean_topic}).
+5. If changing topic, connect naturally with projects or tools previously mentioned by the candidate when relevant.
+6. DO NOT claim proprietary company questions or fabricate candidate experience.
+
+Return JSON:
+{{
+    "question_text": "The conversational question text",
+    "expected_concepts": ["concept 1", "concept 2"],
+    "follow_ups": ["possible subsequent probe"]
+}}
+"""
+        try:
+            generated_json = await llm.generate_json(
+                prompt,
+                system_prompt=f"You are a seasoned human technical interviewer who remembers candidate experience and asks realistic, conversational viva questions for a {clean_type} interview."
+            )
+            validated_data = validate_question_data(
+                generated_json,
+                default_topic=clean_topic,
+                default_diff=clean_diff,
+                default_type="behavioral" if clean_type == "behavioral" else ("hr" if clean_type == "hr" else "technical")
+            )
+
+            # Ensure the generated question is not a duplicate of already asked questions
+            is_dup = is_duplicate_question(validated_data["question_text"], asked_texts)
+            if memory:
+                is_dup = is_dup or MemoryManager.is_semantic_duplicate(validated_data["question_text"], memory)
+
+            if not is_dup:
+                new_question = Question(
+                    company_id=company_id,
+                    role_id=role_id,
+                    topic=validated_data["topic"],
+                    difficulty=validated_data["difficulty"],
+                    question_type=validated_data["question_type"],
+                    question_text=validated_data["question_text"],
+                    expected_concepts=validated_data["expected_concepts"],
+                    follow_ups=validated_data["follow_ups"]
+                )
+                self.db.add(new_question)
+                await self.db.commit()
+                await self.db.refresh(new_question)
+                return new_question
+        except Exception:
+            pass
+
+        # Step 2: Query question bank for matching topic and type (only if not duplicate)
         stmt = select(Question)
         if clean_type in ["hr", "behavioral"]:
             stmt = stmt.where(Question.question_type == clean_type)
         elif clean_type == "technical":
-            stmt = stmt.where(Question.question_type.in_(["technical", "coding", "conceptual"]))
+            stmt = stmt.where(Question.question_type.in_(["technical", "coding", "conceptual", "database", "system_design"]))
             if clean_topic:
                 stmt = stmt.where(Question.topic == clean_topic)
         else:
@@ -165,19 +311,6 @@ class QuestionSelector:
 
         if matched_question and not is_duplicate_question(matched_question.question_text, asked_texts):
             return matched_question
-
-        # Step 2: Query fallback question from bank for any unasked question
-        stmt_fallback = select(Question).where(
-            Question.id.not_in(asked_question_ids) if asked_question_ids else True
-        )
-        if clean_type in ["hr", "behavioral"]:
-            stmt_fallback = stmt_fallback.where(Question.question_type.in_(["hr", "behavioral"]))
-
-        res_fallback = await self.db.execute(stmt_fallback)
-        fallback_q = res_fallback.scalars().first()
-
-        if fallback_q and not is_duplicate_question(fallback_q.question_text, asked_texts):
-            return fallback_q
 
         # Step 3: Check HR/Behavioral predefined fallbacks if relevant
         if clean_type in ["hr", "behavioral"]:
@@ -196,77 +329,26 @@ class QuestionSelector:
                     self.db.add(new_q)
                     await self.db.commit()
                     await self.db.refresh(new_q)
-                    if new_q.id not in asked_question_ids:
-                        return new_q
+                    return new_q
 
-        # Step 4: Dynamic generation grounded in RAG + Resume Context
-        rag_context = ""
-        try:
-            rag_context = await self.rag_engine.get_relevant_context(
-                query=clean_topic,
-                company_id=company_id,
-                role_id=role_id
-            )
-        except Exception:
-            rag_context = "General engineering practices."
-
-        llm = AIFactory.get_llm_provider()
-        prompt = f"""
-Generate an interview question for topic '{clean_topic}' at difficulty level '{clean_diff}' for a '{clean_type}' interview.
-
-TRUSTED COMPANY/ROLE KNOWLEDGE:
-{rag_context}
-
-CANDIDATE RESUME CONTEXT:
-{resume_context or "Candidate with standard engineering background."}
-
-PREVIOUSLY ASKED QUESTIONS (DO NOT DUPLICATE):
-{asked_texts[-3:] if asked_texts else "None"}
-
-INSTRUCTIONS:
-1. Frame the question naturally as an experienced technical interviewer.
-2. Ask WHY, HOW, trade-offs, scale, or failure scenarios. Avoid simple "Define X" textbook questions.
-3. Keep the question focused on the requested topic.
-
-Return JSON:
-{{
-    "question_text": "The conversational question text",
-    "expected_concepts": ["concept 1", "concept 2"],
-    "follow_ups": ["possible follow up question"]
-}}
-"""
-        validated_data = None
-        try:
-            generated_json = await llm.generate_json(
-                prompt,
-                system_prompt=f"You are a human technical interviewer asking realistic questions for a {clean_type} interview."
-            )
-            validated_data = validate_question_data(
-                generated_json,
-                default_topic=clean_topic,
-                default_diff=clean_diff,
-                default_type="behavioral" if clean_type == "behavioral" else ("hr" if clean_type == "hr" else "technical")
-            )
-        except Exception:
-            # Deterministic fallback question
-            validated_data = {
-                "question_text": f"How do you optimize system performance, latency, and reliability when designing solutions with {clean_topic}?",
-                "expected_concepts": [clean_topic, "Scalability", "Error Handling"],
-                "follow_ups": ["What trade-offs did you consider in your architectural choice?"],
-                "difficulty": clean_diff,
-                "question_type": "technical",
-                "topic": clean_topic
-            }
-
+        # Step 4: Safe deterministic fallback question
+        fallback_data = {
+            "question_text": f"Let's discuss {clean_topic}. When designing and implementing solutions in this area, how do you optimize for system performance, reliability, and concurrency trade-offs?",
+            "expected_concepts": [clean_topic, "Scalability", "Error Handling & Trade-offs"],
+            "follow_ups": ["What architectural trade-offs did you consider in your design?"],
+            "difficulty": clean_diff,
+            "question_type": "technical",
+            "topic": clean_topic
+        }
         new_question = Question(
             company_id=company_id,
             role_id=role_id,
-            topic=validated_data["topic"],
-            difficulty=validated_data["difficulty"],
-            question_type=validated_data["question_type"],
-            question_text=validated_data["question_text"],
-            expected_concepts=validated_data["expected_concepts"],
-            follow_ups=validated_data["follow_ups"]
+            topic=fallback_data["topic"],
+            difficulty=fallback_data["difficulty"],
+            question_type=fallback_data["question_type"],
+            question_text=fallback_data["question_text"],
+            expected_concepts=fallback_data["expected_concepts"],
+            follow_ups=fallback_data["follow_ups"]
         )
         self.db.add(new_question)
         await self.db.commit()

@@ -198,6 +198,7 @@ class InterviewState(Base):
     difficulty = Column(String, default="medium", nullable=False)
     time_remaining_seconds = Column(Integer, nullable=False)
     questions_asked_count = Column(Integer, default=0, nullable=False)
+    topic_question_counts = Column(JSON, default=dict)
     current_question_id = Column(Integer, nullable=True)
     skill_scores = Column(JSON, default=dict)
     weak_topics = Column(JSON, default=list)

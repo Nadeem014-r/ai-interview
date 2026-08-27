@@ -208,3 +208,52 @@ async def test_candidate_can_access_protected_endpoint():
         assert user_data["email"] == unique_email.lower()
         assert user_data["full_name"] == "Authed Candidate"
         assert "hashed_password" not in user_data
+
+# 11. Expired token is rejected
+@pytest.mark.asyncio
+async def test_expired_token_is_rejected():
+    from datetime import timedelta
+    expired_token = create_access_token(subject=1, role="candidate", expires_delta=timedelta(seconds=-10))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        res = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {expired_token}"})
+        assert res.status_code == 401
+
+# 12. Onboarding fields persist to DB and are retrievable
+@pytest.mark.asyncio
+async def test_onboarding_profile_persists_to_db():
+    unique_email = f"onboard_{uuid.uuid4().hex[:8]}@example.com"
+    pw = "OnboardPass123!"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        reg_res = await client.post("/api/v1/auth/register", json={
+            "email": unique_email,
+            "password": pw,
+            "full_name": "Onboard Candidate"
+        })
+        token = reg_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Update onboarding fields: target_role, university, graduation_year, skills
+        update_payload = {
+            "target_role": "Backend Engineer",
+            "experience_level": "entry",
+            "university": "Stanford University",
+            "degree": "B.S. Computer Science",
+            "graduation_year": 2026,
+            "skills": ["Python", "FastAPI", "PostgreSQL"],
+            "bio": "Passionate backend developer."
+        }
+        put_res = await client.put("/api/v1/profile", json=update_payload, headers=headers)
+        assert put_res.status_code == 200
+        data = put_res.json()
+        assert data["target_role"] == "Backend Engineer"
+        assert data["university"] == "Stanford University"
+        assert data["graduation_year"] == 2026
+        assert "FastAPI" in data["skills"]
+
+        # Fetch profile again (GET /api/v1/profile)
+        get_res = await client.get("/api/v1/profile", headers=headers)
+        assert get_res.status_code == 200
+        get_data = get_res.json()
+        assert get_data["target_role"] == "Backend Engineer"
+        assert get_data["university"] == "Stanford University"
+        assert get_data["graduation_year"] == 2026

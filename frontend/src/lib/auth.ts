@@ -11,8 +11,25 @@ export const setStoredToken = (token: string) => {
   }
 };
 
+export const isAuthenticated = (): boolean => {
+  return !!getStoredToken();
+};
+
+export const requireAuth = (router: any): boolean => {
+  if (typeof window !== "undefined") {
+    const token = getStoredToken();
+    if (!token) {
+      router.push("/login");
+      return false;
+    }
+    return true;
+  }
+  return false;
+};
+
 export const removeStoredToken = () => {
   if (typeof window !== "undefined") {
     localStorage.removeItem("token");
   }
 };
+

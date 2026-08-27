@@ -2,8 +2,17 @@
 """
 
 import os
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
+from dotenv import load_dotenv
+
+# Robust project-relative .env loading
+env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path, override=False)
+else:
+    load_dotenv(override=False)
 
 
 @dataclass(frozen=True)
@@ -12,8 +21,8 @@ class ProviderConfig:
 
     # ElevenLabs TTS Configuration
     ELEVENLABS_API_KEY: Optional[str] = os.getenv("ELEVENLABS_API_KEY")
-    ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # Rachel / Default
-    ELEVENLABS_MODEL: str = os.getenv("ELEVENLABS_MODEL", "eleven_monolingual_v1")
+    ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "hqBknhU0QebV576rq8S9")
+    ELEVENLABS_MODEL: str = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
     ELEVENLABS_TIMEOUT_SECONDS: float = float(os.getenv("ELEVENLABS_TIMEOUT_SECONDS", "15.0"))
     ELEVENLABS_OUTPUT_FORMAT: str = os.getenv("ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_128")
     ELEVENLABS_BASE_URL: str = os.getenv("ELEVENLABS_BASE_URL", "https://api.elevenlabs.io/v1")
@@ -34,11 +43,26 @@ class ProviderConfig:
     MAX_RETRIES: int = int(os.getenv("PROVIDER_MAX_RETRIES", "2"))
     INITIAL_BACKOFF_SEC: float = float(os.getenv("PROVIDER_INITIAL_BACKOFF_SEC", "0.5"))
 
+    # Phase 5: Real-time Voice & Turn-taking Configuration
+    VOICE_SILENCE_TIMEOUT_SEC: float = float(os.getenv("VOICE_SILENCE_TIMEOUT", "2.8"))
+    VOICE_MIN_SPEECH_DURATION_SEC: float = float(os.getenv("VOICE_MIN_SPEECH_DURATION", "1.0"))
+    VOICE_MAX_RESPONSE_DURATION_SEC: float = float(os.getenv("VOICE_MAX_RESPONSE_DURATION", "120.0"))
+    VOICE_BARGE_IN_ENABLED: bool = os.getenv("VOICE_BARGE_IN_ENABLED", "true").lower() in ("true", "1", "yes")
+
     @classmethod
     def from_env(cls) -> "ProviderConfig":
         """Construct ProviderConfig from active environment."""
-        return cls()
+        return cls(
+            ELEVENLABS_API_KEY=os.getenv("ELEVENLABS_API_KEY"),
+            ELEVENLABS_VOICE_ID=os.getenv("ELEVENLABS_VOICE_ID", "hqBknhU0QebV576rq8S9"),
+            ELEVENLABS_MODEL=os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5"),
+            VOICE_SILENCE_TIMEOUT_SEC=float(os.getenv("VOICE_SILENCE_TIMEOUT", "2.8")),
+            VOICE_MIN_SPEECH_DURATION_SEC=float(os.getenv("VOICE_MIN_SPEECH_DURATION", "1.0")),
+            VOICE_MAX_RESPONSE_DURATION_SEC=float(os.getenv("VOICE_MAX_RESPONSE_DURATION", "120.0")),
+            VOICE_BARGE_IN_ENABLED=os.getenv("VOICE_BARGE_IN_ENABLED", "true").lower() in ("true", "1", "yes"),
+        )
 
 
 # Default provider config instance
 provider_config = ProviderConfig.from_env()
+

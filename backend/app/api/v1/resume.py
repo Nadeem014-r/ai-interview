@@ -78,24 +78,34 @@ async def upload_resume(
         )
         db.add(new_profile)
 
-        # Synchronize with CandidateProfile without overwriting existing candidate manual data
+        # Synchronize with CandidateProfile on upload or replace
         stmt_prof = select(CandidateProfile).where(CandidateProfile.user_id == user_id)
         res_prof = await db.execute(stmt_prof)
         cand_prof = res_prof.scalars().first()
 
         if cand_prof:
-            if not cand_prof.skills and new_profile.skills:
+            if new_profile.skills:
                 cand_prof.skills = list(new_profile.skills)
-            if not cand_prof.projects and new_profile.projects:
+            if new_profile.projects:
                 cand_prof.projects = list(new_profile.projects)
             if new_profile.education and len(new_profile.education) > 0:
                 first_edu = new_profile.education[0]
-                if not cand_prof.university and first_edu.get("institution"):
+                if first_edu.get("institution"):
                     cand_prof.university = first_edu.get("institution")
-                if not cand_prof.degree and first_edu.get("degree"):
+                if first_edu.get("degree"):
                     cand_prof.degree = first_edu.get("degree")
-            if not cand_prof.phone and new_profile.explicit_facts.get("phone"):
+            if new_profile.explicit_facts.get("phone"):
                 cand_prof.phone = new_profile.explicit_facts.get("phone")
+        else:
+            cand_prof = CandidateProfile(
+                user_id=user_id,
+                skills=list(new_profile.skills) if new_profile.skills else [],
+                projects=list(new_profile.projects) if new_profile.projects else [],
+                university=new_profile.education[0].get("institution") if new_profile.education and len(new_profile.education) > 0 else None,
+                degree=new_profile.education[0].get("degree") if new_profile.education and len(new_profile.education) > 0 else None,
+                phone=new_profile.explicit_facts.get("phone")
+            )
+            db.add(cand_prof)
 
         await db.commit()
         await db.refresh(new_resume)
@@ -139,6 +149,27 @@ async def get_my_resumes(
     )
     res = await db.execute(stmt)
     return res.scalars().all()
+
+@router.get("/current", response_model=ResumeOut)
+async def get_current_resume(
+    payload: dict = Depends(get_current_user_payload),
+    db: AsyncSession = Depends(get_db)
+):
+    user_id = payload["user_id"]
+    stmt = (
+        select(Resume)
+        .options(selectinload(Resume.resume_profile))
+        .where(Resume.user_id == user_id)
+        .order_by(Resume.created_at.desc())
+    )
+    res = await db.execute(stmt)
+    resume = res.scalars().first()
+    if not resume:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active resume found for this candidate."
+        )
+    return resume
 
 @router.get("/{resume_id}", response_model=ResumeOut)
 async def get_resume_by_id(

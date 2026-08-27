@@ -22,6 +22,12 @@ export async function apiRequest<T>(
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      if (typeof window !== "undefined" && !endpoint.includes("/auth/login") && !endpoint.includes("/auth/register")) {
+        localStorage.removeItem("token");
+        window.location.href = "/login";
+      }
+    }
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || "An API request error occurred.");
   }

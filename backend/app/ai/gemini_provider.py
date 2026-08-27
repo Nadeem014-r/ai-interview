@@ -1,6 +1,6 @@
 """Phase 8: Production-Grade Gemini AI Provider.
 
-Integrates with Google Gemini models (Gemini 1.5 Flash, Gemini 1.5 Pro, Text-Embedding-004)
+Integrates with Google Gemini models (Gemini 3.6 Flash, Gemini 1.5 Pro, Text-Embedding-004)
 with resilience retries, structured JSON schema validation, token tracking, and embedding safety.
 """
 
@@ -26,8 +26,8 @@ class GeminiLLMProvider(LLMProvider):
     """Google Gemini LLM provider implementation."""
 
     def __init__(self, api_key: Optional[str] = None, default_model: Optional[str] = None):
-        self.api_key = api_key or settings.GEMINI_API_KEY
-        self.default_model = default_model or settings.GEMINI_DEFAULT_MODEL or "gemini-1.5-flash"
+        self.api_key = settings.GEMINI_API_KEY if api_key is None else api_key
+        self.default_model = default_model or settings.GEMINI_DEFAULT_MODEL or "gemini-3.6-flash"
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
 
     async def generate_text(
@@ -49,6 +49,7 @@ class GeminiLLMProvider(LLMProvider):
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": temperature,
+                "maxOutputTokens": max_tokens or 512,
             }
         }
         if max_tokens:
@@ -66,10 +67,29 @@ class GeminiLLMProvider(LLMProvider):
                 res = await client.post(url, json=payload)
                 res.raise_for_status()
                 data = res.json()
-                try:
-                    return data["candidates"][0]["content"]["parts"][0]["text"]
-                except (KeyError, IndexError) as e:
-                    raise AIInvalidRequestError(f"Malformed response structure from Gemini API: {data}", provider="gemini") from e
+                
+                candidates = data.get("candidates")
+                if not candidates or not isinstance(candidates, list) or len(candidates) == 0:
+                    prompt_feedback = data.get("promptFeedback", {})
+                    block_reason = prompt_feedback.get("blockReason", "Unknown block reason")
+                    raise AIInvalidRequestError(f"Gemini API returned no candidates. Block reason: {block_reason}", provider="gemini")
+
+                first_candidate = candidates[0]
+                content = first_candidate.get("content")
+                if not content or not isinstance(content, dict):
+                    finish_reason = first_candidate.get("finishReason", "UNKNOWN")
+                    raise AIInvalidRequestError(f"Gemini returned empty content with finishReason: {finish_reason}", provider="gemini")
+
+                parts = content.get("parts")
+                if not parts or not isinstance(parts, list) or len(parts) == 0:
+                    finish_reason = first_candidate.get("finishReason", "UNKNOWN")
+                    raise AIInvalidRequestError(f"Gemini returned empty parts list with finishReason: {finish_reason}", provider="gemini")
+
+                text_part = parts[0].get("text")
+                if text_part is None:
+                    raise AIInvalidRequestError(f"Missing text field in Gemini candidate part: {parts[0]}", provider="gemini")
+
+                return text_part
 
         try:
             result_text = await execute_with_resilience(_call, provider="gemini", operation_name="generate_text")
@@ -131,7 +151,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
     """Google Gemini embedding provider (text-embedding-004)."""
 
     def __init__(self, api_key: Optional[str] = None, default_model: Optional[str] = None):
-        self.api_key = api_key or settings.GEMINI_API_KEY
+        self.api_key = settings.GEMINI_API_KEY if api_key is None else api_key
         self.default_model = default_model or settings.GEMINI_EMBEDDING_MODEL or "text-embedding-004"
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
 

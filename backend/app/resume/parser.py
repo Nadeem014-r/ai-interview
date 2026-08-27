@@ -22,6 +22,119 @@ TECH_SKILLS_DICTIONARY = [
     "Object-Oriented Programming", "OOP", "SQL", "NoSQL", "Machine Learning", "Deep Learning", "NLP"
 ]
 
+CANONICAL_SKILL_MAP = {
+    "python": "Python",
+    "java": "Java",
+    "c++": "C++",
+    "cpp": "C++",
+    "c#": "C#",
+    "csharp": "C#",
+    "c": "C",
+    "javascript": "JavaScript",
+    "js": "JavaScript",
+    "typescript": "TypeScript",
+    "ts": "TypeScript",
+    "golang": "Go",
+    "go": "Go",
+    "rust": "Rust",
+    "ruby": "Ruby",
+    "php": "PHP",
+    "kotlin": "Kotlin",
+    "swift": "Swift",
+    "scala": "Scala",
+    "fastapi": "FastAPI",
+    "django": "Django",
+    "flask": "Flask",
+    "react": "React",
+    "react.js": "React",
+    "reactjs": "React",
+    "next.js": "Next.js",
+    "nextjs": "Next.js",
+    "vue": "Vue",
+    "vue.js": "Vue",
+    "vuejs": "Vue",
+    "angular": "Angular",
+    "angular.js": "Angular",
+    "angularjs": "Angular",
+    "node.js": "Node.js",
+    "nodejs": "Node.js",
+    "node": "Node.js",
+    "express": "Express",
+    "express.js": "Express",
+    "expressjs": "Express",
+    "spring boot": "Spring Boot",
+    "springboot": "Spring Boot",
+    "pytorch": "PyTorch",
+    "tensorflow": "TensorFlow",
+    "scikit-learn": "Scikit-Learn",
+    "scikitlearn": "Scikit-Learn",
+    "sklearn": "Scikit-Learn",
+    "pandas": "Pandas",
+    "numpy": "NumPy",
+    "opencv": "OpenCV",
+    "postgresql": "PostgreSQL",
+    "postgres": "PostgreSQL",
+    "mysql": "MySQL",
+    "sqlite": "SQLite",
+    "mongodb": "MongoDB",
+    "mongo": "MongoDB",
+    "redis": "Redis",
+    "elasticsearch": "Elasticsearch",
+    "docker": "Docker",
+    "kubernetes": "Kubernetes",
+    "k8s": "Kubernetes",
+    "aws": "AWS",
+    "azure": "Azure",
+    "gcp": "GCP",
+    "google cloud": "GCP",
+    "google cloud platform": "GCP",
+    "ci/cd": "CI/CD",
+    "cicd": "CI/CD",
+    "git": "Git",
+    "github": "GitHub",
+    "linux": "Linux",
+    "terraform": "Terraform",
+    "rest": "REST APIs",
+    "rest api": "REST APIs",
+    "rest apis": "REST APIs",
+    "restful": "REST APIs",
+    "restful apis": "REST APIs",
+    "graphql": "GraphQL",
+    "grpc": "gRPC",
+    "microservices": "Microservices",
+    "data structures": "Data Structures",
+    "algorithms": "Algorithms",
+    "dsa": "Data Structures",
+    "system design": "System Design",
+    "sql": "SQL",
+    "nosql": "NoSQL",
+    "machine learning": "Machine Learning",
+    "ml": "Machine Learning",
+    "deep learning": "Deep Learning",
+    "dl": "Deep Learning",
+    "nlp": "NLP"
+}
+
+def normalize_skills(skills: List[str]) -> List[str]:
+    """
+    Normalizes skill names to canonical naming and deduplicates while preserving order.
+    """
+    seen_lower = set()
+    normalized = []
+    for skill in skills:
+        if not skill or not isinstance(skill, str):
+            continue
+        cleaned = skill.strip()
+        if not cleaned:
+            continue
+        lower_key = cleaned.lower()
+        canonical_name = CANONICAL_SKILL_MAP.get(lower_key, cleaned)
+        canonical_lower = canonical_name.lower()
+        if canonical_lower not in seen_lower:
+            seen_lower.add(canonical_lower)
+            normalized.append(canonical_name)
+    return normalized
+
 class ResumeParser:
     @staticmethod
     def extract_text_from_bytes(file_bytes: bytes, filename: str) -> str:
@@ -137,6 +250,8 @@ class ResumeParser:
             if re.search(pattern, raw_text, re.IGNORECASE):
                 if skill not in extracted_skills:
                     extracted_skills.append(skill)
+
+        extracted_skills = normalize_skills(extracted_skills)
 
         # 5. Education Extraction
         education_list = []
@@ -273,18 +388,21 @@ Return a valid JSON object matching this exact schema:
                 explicit_facts["candidate_name"] = rule_data["explicit_facts"]["candidate_name"]
 
             # Merge skills
-            skills = parsed.get("skills", [])
-            if not isinstance(skills, list) or len(skills) == 0:
+            skills_raw = parsed.get("skills", [])
+            if not isinstance(skills_raw, list) or len(skills_raw) == 0:
                 skills = rule_data["skills"]
             else:
-                # Combine with deterministic skills to ensure full coverage
+                combined_skills = list(skills_raw)
                 for s in rule_data["skills"]:
-                    if s not in skills:
-                        skills.append(s)
+                    if s not in combined_skills:
+                        combined_skills.append(s)
+                skills = normalize_skills(combined_skills)
 
-            technologies = parsed.get("technologies", [])
-            if not isinstance(technologies, list) or len(technologies) == 0:
+            technologies_raw = parsed.get("technologies", [])
+            if not isinstance(technologies_raw, list) or len(technologies_raw) == 0:
                 technologies = skills
+            else:
+                technologies = normalize_skills(technologies_raw)
 
             education = parsed.get("education", [])
             if not isinstance(education, list):

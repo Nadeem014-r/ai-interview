@@ -40,7 +40,7 @@ class ElevenLabsTTSProvider(TTSProvider):
         http_client: Optional[httpx.AsyncClient] = None
     ):
         self.config = config or provider_config
-        self.api_key = api_key or self.config.ELEVENLABS_API_KEY
+        self.api_key = api_key if api_key is not None else self.config.ELEVENLABS_API_KEY
         self.default_voice_id = voice_id or self.config.ELEVENLABS_VOICE_ID
         self.model = model or self.config.ELEVENLABS_MODEL
         self._custom_client = http_client

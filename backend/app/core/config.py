@@ -22,12 +22,13 @@ class Settings(BaseSettings):
     
     REDIS_URL: str = "redis://localhost:6379/0"
     
-    DEFAULT_LLM_PROVIDER: str = "mock"
+    DEFAULT_LLM_PROVIDER: str = "gemini"
     DEFAULT_EMBEDDING_PROVIDER: str = "mock"
     DEFAULT_STT_PROVIDER: str = "mock"
     DEFAULT_TTS_PROVIDER: str = "mock"
     
     GEMINI_API_KEY: str = ""
+    GEMINI_DEFAULT_MODEL: str = "gemini-3.6-flash"
     OPENAI_API_KEY: str = ""
     ELEVENLABS_API_KEY: str = ""
     
@@ -60,7 +61,7 @@ class Settings(BaseSettings):
     LLM_MAX_INPUT_TOKENS: int = 8000
     LLM_CONTEXT_WINDOW_LIMIT: int = 32000
 
-    GEMINI_DEFAULT_MODEL: str = "gemini-1.5-flash"
+    GEMINI_DEFAULT_MODEL: str = "gemini-3.6-flash"
     GEMINI_EMBEDDING_MODEL: str = "text-embedding-004"
     OPENAI_DEFAULT_MODEL: str = "gpt-4o-mini"
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"

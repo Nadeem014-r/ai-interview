@@ -59,6 +59,7 @@ class AIFactory:
         Wraps with fallback provider (defaults to mock) if fallback is enabled.
         """
         primary_name = (provider_name or settings.DEFAULT_LLM_PROVIDER).lower()
+
         use_fallback = enable_fallback if enable_fallback is not None else settings.LLM_ENABLE_FALLBACK
         fb_name = (fallback_name or settings.LLM_FALLBACK_PROVIDER).lower()
 
@@ -117,9 +118,39 @@ class AIFactory:
     @staticmethod
     def get_stt_provider(provider_name: Optional[str] = None) -> STTProvider:
         """Get Speech-to-Text provider."""
+        from app.providers.config import provider_config
+        p_name = (provider_name or getattr(settings, "DEFAULT_STT_PROVIDER", None) or provider_config.DEFAULT_STT_PROVIDER or "mock").lower().strip()
+        if p_name in ("whisper", "openai"):
+            api_key = getattr(settings, "OPENAI_API_KEY", None) or provider_config.OPENAI_API_KEY
+            if api_key and str(api_key).strip():
+                try:
+                    from app.providers.whisper_stt import WhisperSTTProvider
+                    return WhisperSTTProvider()
+                except Exception as e:
+                    logger.warning(f"Failed to instantiate WhisperSTTProvider: {e}. Falling back to MockSTTProvider.")
+                    return MockSTTProvider()
+            else:
+                logger.info("OPENAI_API_KEY not set. Using MockSTTProvider (offline mode).")
+                return MockSTTProvider()
         return MockSTTProvider()
 
     @staticmethod
     def get_tts_provider(provider_name: Optional[str] = None) -> TTSProvider:
-        """Get Text-to-Speech provider."""
+        """Get Text-to-Speech provider with ElevenLabs integration and safe fallback."""
+        from app.providers.config import provider_config
+        p_name = (provider_name or getattr(settings, "DEFAULT_TTS_PROVIDER", None) or provider_config.DEFAULT_TTS_PROVIDER or "elevenlabs").lower().strip()
+        if p_name == "elevenlabs":
+            api_key = getattr(settings, "ELEVENLABS_API_KEY", None) or provider_config.ELEVENLABS_API_KEY
+            if api_key and str(api_key).strip():
+                try:
+                    from app.providers.elevenlabs_tts import ElevenLabsTTSProvider
+                    return ElevenLabsTTSProvider()
+                except Exception as e:
+                    logger.warning(f"Failed to instantiate ElevenLabsTTSProvider: {e}. Falling back to MockTTSProvider.")
+                    return MockTTSProvider()
+            else:
+                logger.info("ELEVENLABS_API_KEY not configured. Falling back to MockTTSProvider (offline mode).")
+                return MockTTSProvider()
+        elif p_name == "mock":
+            return MockTTSProvider()
         return MockTTSProvider()

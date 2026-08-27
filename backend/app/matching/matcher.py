@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Optional
 import re
 from app.db.models import Role, Company, ResumeProfile, CandidateProfile
+from app.resume.parser import CANONICAL_SKILL_MAP
 
 class JobMatchingEngine:
     """
@@ -20,6 +21,35 @@ class JobMatchingEngine:
     }
 
     @classmethod
+    def _is_skill_matched(cls, req_skill_lower: str, req_canon_lower: str, cand_skills_map: Dict[str, str]) -> bool:
+        """
+        Determines if a role requirement matches candidate skills safely.
+        Avoids false positives from single/short letter substrings while supporting
+        canonical aliases and multi-word semantic variations.
+        """
+        # Exact raw or canonical match
+        if req_skill_lower in cand_skills_map or req_canon_lower in cand_skills_map:
+            return True
+
+        # Word boundary / semantic prefix match for longer multi-word skills
+        for c_key in cand_skills_map.keys():
+            # Exact equality
+            if req_skill_lower == c_key or req_canon_lower == c_key:
+                return True
+            
+            # Substring matching only for meaningful term lengths (>= 4 chars) with word boundaries
+            if len(req_skill_lower) >= 4 and len(c_key) >= 4:
+                if (
+                    re.search(r'\b' + re.escape(req_skill_lower) + r'\b', c_key)
+                    or re.search(r'\b' + re.escape(c_key) + r'\b', req_skill_lower)
+                    or (req_skill_lower in c_key and len(req_skill_lower) >= 5)
+                    or (c_key in req_skill_lower and len(c_key) >= 5)
+                ):
+                    return True
+
+        return False
+
+    @classmethod
     def match_candidate_to_role(
         cls,
         candidate_skills: List[str],
@@ -32,24 +62,38 @@ class JobMatchingEngine:
     ) -> Dict[str, Any]:
         w = weights or cls.DEFAULT_WEIGHTS
 
-        # Normalize skill sets (case-insensitive)
-        cand_skills_lower = {s.strip().lower(): s for s in candidate_skills if s}
+        # Normalize candidate skill sets (case-insensitive & canonical)
+        cand_skills_map: Dict[str, str] = {}
+        for s in candidate_skills:
+            if s and isinstance(s, str):
+                s_clean = s.strip()
+                if s_clean:
+                    s_lower = s_clean.lower()
+                    canon = CANONICAL_SKILL_MAP.get(s_lower, s_clean)
+                    cand_skills_map[s_lower] = s_clean
+                    cand_skills_map[canon.lower()] = canon
+
         req_skills = role.required_skills or []
-        req_skills_lower = {s.strip().lower(): s for s in req_skills if s}
+        req_clean_list = [s.strip() for s in req_skills if s and isinstance(s, str) and s.strip()]
 
         # 1. Skills Matching
-        matched_skills = []
-        missing_skills = []
-        for s_lower, orig_s in req_skills_lower.items():
-            if s_lower in cand_skills_lower or any(s_lower in cs or cs in s_lower for cs in cand_skills_lower):
+        matched_skills: List[str] = []
+        missing_skills: List[str] = []
+
+        for orig_s in req_clean_list:
+            s_lower = orig_s.lower()
+            s_canon_lower = CANONICAL_SKILL_MAP.get(s_lower, orig_s).lower()
+
+            if cls._is_skill_matched(s_lower, s_canon_lower, cand_skills_map):
                 matched_skills.append(orig_s)
             else:
                 missing_skills.append(orig_s)
 
-        if req_skills:
-            skills_score = (len(matched_skills) / len(req_skills)) * 100.0
+        if req_clean_list:
+            skills_score = (len(matched_skills) / len(req_clean_list)) * 100.0
         else:
-            skills_score = 100.0 if candidate_skills else 50.0
+            # If a role specifies no required skills, it has 0 skill overlap
+            skills_score = 0.0
 
         # 2. Experience Level Matching
         role_level = (role.level or "").lower()
@@ -59,11 +103,11 @@ class JobMatchingEngine:
             exp_score = 100.0 if "senior" in cand_level else (70.0 if "mid" in cand_level else 40.0)
         elif "mid" in role_level or "l4" in role_level:
             exp_score = 100.0 if ("mid" in cand_level or "senior" in cand_level) else 75.0
-        else: # entry / l3 / graduate
+        else:  # entry / l3 / graduate
             exp_score = 100.0
 
         # 3. Education Matching
-        edu_score = 80.0 # baseline
+        edu_score = 80.0  # baseline
         if candidate_education:
             edu_str = " ".join(str(e.get("degree", "")) for e in candidate_education).lower()
             if any(term in edu_str for term in ["b.tech", "btech", "computer science", "b.e", "m.tech", "m.s", "bachelor", "master"]):
@@ -73,15 +117,22 @@ class JobMatchingEngine:
 
         # 4. Projects & Domain Keywords Matching
         key_topics = role.key_topics or []
-        project_techs = []
+        project_techs: List[str] = []
         for p in candidate_projects:
             for t in p.get("technologies", []):
-                project_techs.append(t.lower())
+                if t and isinstance(t, str):
+                    project_techs.append(t.lower())
 
         matched_topics = 0
         for topic in key_topics:
             topic_lower = topic.lower()
-            if any(topic_lower in pt or pt in topic_lower for pt in project_techs) or any(topic_lower in cs for cs in cand_skills_lower):
+            topic_canon = CANONICAL_SKILL_MAP.get(topic_lower, topic).lower()
+            if (
+                any(topic_lower in pt or pt in topic_lower for pt in project_techs)
+                or topic_lower in cand_skills_map
+                or topic_canon in cand_skills_map
+                or any(topic_lower in cs or cs in topic_lower for cs in cand_skills_map if len(cs) >= 4)
+            ):
                 matched_topics += 1
 
         if key_topics:

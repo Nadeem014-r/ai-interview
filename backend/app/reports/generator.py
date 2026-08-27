@@ -5,7 +5,10 @@ from app.db.models import Interview, Answer, Evaluation, Report, Question, Compa
 from app.evaluation.scorer import DeterministicScorer
 from app.ai.factory import AIFactory
 
+
 class ReportGenerator:
+    """Evidence-based report generator grounded in candidate interview turns."""
+
     def __init__(self, db: AsyncSession):
         self.db = db
 
@@ -32,16 +35,17 @@ class ReportGenerator:
         question_scores = []
         topic_score_sums: Dict[str, List[float]] = {}
         rubric_sums = {"correctness": 0.0, "relevance": 0.0, "reasoning": 0.0, "depth": 0.0, "communication": 0.0}
+        evidence_records: List[str] = []
 
         for ans in answers:
             stmt_eval = select(Evaluation).where(Evaluation.answer_id == ans.id)
             res_eval = await self.db.execute(stmt_eval)
             evaluation = res_eval.scalars().first()
-            
+
             stmt_q = select(Question).where(Question.id == ans.question_id)
             res_q = await self.db.execute(stmt_q)
             q = res_q.scalars().first()
-            
+
             if evaluation:
                 question_scores.append(evaluation.overall_question_score)
                 rubric_sums["correctness"] += evaluation.correctness_score
@@ -49,15 +53,19 @@ class ReportGenerator:
                 rubric_sums["reasoning"] += evaluation.reasoning_score
                 rubric_sums["depth"] += evaluation.depth_score
                 rubric_sums["communication"] += evaluation.communication_score
-                
-                if q and q.topic:
-                    if q.topic not in topic_score_sums:
-                        topic_score_sums[q.topic] = []
-                    topic_score_sums[q.topic].append(evaluation.overall_question_score)
+
+                topic_name = q.topic if (q and q.topic) else "General Technical"
+                if topic_name not in topic_score_sums:
+                    topic_score_sums[topic_name] = []
+                topic_score_sums[topic_name].append(evaluation.overall_question_score)
+
+                if evaluation.evidence:
+                    for ev in evaluation.evidence:
+                        evidence_records.append(f"[{topic_name} (Score: {evaluation.overall_question_score}/10)] {ev}")
 
         # Deterministic score calculation
         overall_score = DeterministicScorer.calculate_overall_interview_score(question_scores)
-        
+
         topic_scores = {}
         for topic, scores in topic_score_sums.items():
             topic_scores[topic] = round((sum(scores) / len(scores)) * 10.0, 1)
@@ -65,32 +73,51 @@ class ReportGenerator:
         count = max(1, len(question_scores))
         rubric_scores = {k: round(v / count, 1) for k, v in rubric_sums.items()}
 
-        # LLM generated feedback summary
+        # Identify actual weak vs strong topics from scores
+        strong_topics_list = [t for t, s in topic_scores.items() if s >= 75.0]
+        weak_topics_list = [t for t, s in topic_scores.items() if s < 60.0]
+        difficult_topics_list = weak_topics_list if weak_topics_list else ([min(topic_scores, key=topic_scores.get)] if topic_scores else [])
+
+        # LLM generated feedback summary grounded in evidence
         llm = AIFactory.get_llm_provider()
         prompt = f"""
-        Generate candidate interview report synthesis based on structured metrics:
-        OVERALL SCORE: {overall_score}/100
-        TOPIC SCORES: {topic_scores}
-        RUBRIC SCORES: {rubric_scores}
-        
-        Return JSON matching:
-        {{
-            "strengths": ["list 3 key candidate strengths"],
-            "weaknesses": ["list 2 key technical weaknesses"],
-            "difficult_topics": ["topics candidate struggled with"],
-            "recommendations": ["list 3 actionable study/practice recommendations"],
-            "executive_summary": "Concise 3-sentence performance overview for placement cell/interview panel."
-        }}
-        """
+Generate an executive candidate interview assessment report grounded strictly in the interview metrics and evidence.
+
+INTERVIEW OVERALL SCORE: {overall_score}/100
+TOPIC BREAKDOWN SCORES: {topic_scores}
+DIMENSION RUBRIC SCORES (0-10): {rubric_scores}
+
+OBSERVED INTERVIEW EVIDENCE:
+{evidence_records[:6] if evidence_records else "Standard technical viva interview."}
+
+RULES:
+1. Ground all strengths and weaknesses strictly in the topics assessed during this interview.
+2. DO NOT invent or fabricate candidate achievements or knowledge not demonstrated in the evidence.
+3. If a topic was scored poorly, reflect it as a knowledge gap or area for improvement.
+4. Recommendations must be actionable study topics directly related to the weak areas.
+
+Return JSON:
+{{
+    "strengths": ["list 2-3 key demonstrated candidate strengths"],
+    "weaknesses": ["list 2 key technical or communication gaps"],
+    "difficult_topics": ["topics candidate struggled with"],
+    "recommendations": ["list 2-3 actionable study/practice recommendations"],
+    "executive_summary": "Concise 3-sentence performance overview for placement cell/interview panel."
+}}
+"""
         try:
             summary_json = await llm.generate_json(prompt)
         except Exception:
+            strengths_fallback = [f"Demonstrated solid grasp of {t}" for t in strong_topics_list] if strong_topics_list else ["Structured problem-solving communication"]
+            weaknesses_fallback = [f"Need deeper exploration of {t} trade-offs" for t in weak_topics_list] if weak_topics_list else ["Deep edge-case handling needs practice"]
+            recommendations_fallback = [f"Review advanced architectural trade-offs in {t}" for t in (difficult_topics_list or ["System Design"])]
+
             summary_json = {
-                "strengths": ["Demonstrates strong foundational knowledge", "Structured communication style"],
-                "weaknesses": ["Deep technical edge cases need further practice"],
-                "difficult_topics": list(topic_scores.keys())[:1] if topic_scores else ["System Optimization"],
-                "recommendations": ["Review relational database indexing", "Practice system design interviews"],
-                "executive_summary": f"The candidate scored {overall_score}/100 across target interview topics. Recommended for next placement rounds with targeted study."
+                "strengths": strengths_fallback[:3],
+                "weaknesses": weaknesses_fallback[:2],
+                "difficult_topics": difficult_topics_list[:2],
+                "recommendations": recommendations_fallback[:3],
+                "executive_summary": f"The candidate achieved an overall score of {overall_score}/100 across assessed interview competencies. Recommended for placement rounds with targeted practice on identified areas."
             }
 
         report = Report(
@@ -100,7 +127,7 @@ class ReportGenerator:
             rubric_scores=rubric_scores,
             strengths=summary_json.get("strengths", []),
             weaknesses=summary_json.get("weaknesses", []),
-            difficult_topics=summary_json.get("difficult_topics", []),
+            difficult_topics=summary_json.get("difficult_topics", difficult_topics_list),
             recommendations=summary_json.get("recommendations", []),
             executive_summary=summary_json.get("executive_summary", "")
         )

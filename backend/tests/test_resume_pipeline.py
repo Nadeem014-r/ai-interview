@@ -335,3 +335,175 @@ async def test_candidate_can_update_parsed_resume_profile():
         updated = put_res.json()
         assert "System Design" in updated["resume_profile"]["skills"]
         assert "FastAPI" in updated["resume_profile"]["skills"]
+
+# 29. Test GET /resume/current for new candidate vs candidate with uploaded resume
+@pytest.mark.asyncio
+async def test_get_current_resume_lifecycle():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token, user_id = await register_and_get_token(client)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # New candidate has no active resume
+        get_empty = await client.get("/api/v1/resume/current", headers=headers)
+        assert get_empty.status_code == 404
+        assert "No active resume found" in get_empty.json()["detail"]
+
+        # Upload a resume
+        txt_bytes = b"Jane Tech\nEmail: jane@tech.com\nSkills: Python, FastAPI, Docker, Kubernetes"
+        files = {"file": ("jane_resume.txt", txt_bytes, "text/plain")}
+        upload_res = await client.post("/api/v1/resume/upload", files=files, headers=headers)
+        assert upload_res.status_code == 201
+
+        # Current endpoint returns active resume
+        get_active = await client.get("/api/v1/resume/current", headers=headers)
+        assert get_active.status_code == 200
+        active_data = get_active.json()
+        assert active_data["filename"] == "jane_resume.txt"
+        assert "FastAPI" in active_data["resume_profile"]["skills"]
+        assert "Docker" in active_data["resume_profile"]["skills"]
+
+# 30. Test persistence across logout and login (multiple sessions)
+@pytest.mark.asyncio
+async def test_resume_persistence_across_login_sessions():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        email = f"persistent_{uuid.uuid4().hex[:8]}@example.com"
+        password = "Password123!"
+
+        # Register
+        reg_res = await client.post("/api/v1/auth/register", json={
+            "email": email,
+            "password": password,
+            "full_name": "Persistent Candidate"
+        })
+        token1 = reg_res.json()["access_token"]
+        headers1 = {"Authorization": f"Bearer {token1}"}
+
+        # Upload resume
+        txt_bytes = b"Persistent Candidate\nEmail: persistent@example.com\nSkills: Python, PostgreSQL, React"
+        files = {"file": ("persistent_resume.txt", txt_bytes, "text/plain")}
+        await client.post("/api/v1/resume/upload", files=files, headers=headers1)
+
+        # Simulate logout / login days later: obtain new token via /login
+        login_res = await client.post("/api/v1/auth/login", json={
+            "email": email,
+            "password": password
+        })
+        assert login_res.status_code == 200
+        token2 = login_res.json()["access_token"]
+        headers2 = {"Authorization": f"Bearer {token2}"}
+
+        # Retrieve current resume with new token
+        get_current = await client.get("/api/v1/resume/current", headers=headers2)
+        assert get_current.status_code == 200
+        curr = get_current.json()
+        assert curr["filename"] == "persistent_resume.txt"
+        assert "Python" in curr["resume_profile"]["skills"]
+        assert "PostgreSQL" in curr["resume_profile"]["skills"]
+
+# 31. Test skill normalization and deduplication
+def test_skill_normalization_function():
+    from app.resume.parser import normalize_skills
+    raw_skills = ["python", "PYTHON", "Python", "fastapi", "FASTAPI", "reactjs", "react.js", "React", "k8s", "Docker", "docker"]
+    normalized = normalize_skills(raw_skills)
+    assert normalized == ["Python", "FastAPI", "React", "Kubernetes", "Docker"]
+
+# 32. Test resume replace updates candidate profile and active resume
+@pytest.mark.asyncio
+async def test_resume_replacement_updates_candidate_profile():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token, _ = await register_and_get_token(client)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Upload Resume 1: Frontend developer
+        res1_bytes = b"Dev One\nSkills: React, JavaScript, HTML, CSS\nEducation: B.Tech in IT, Oxford University 2022"
+        files1 = {"file": ("resume_v1.txt", res1_bytes, "text/plain")}
+        await client.post("/api/v1/resume/upload", files=files1, headers=headers)
+
+        prof1 = (await client.get("/api/v1/profile", headers=headers)).json()
+        assert "React" in prof1["skills"]
+        assert "JavaScript" in prof1["skills"]
+
+        # Replace with Resume 2: Backend developer
+        res2_bytes = b"Dev One Updated\nSkills: Python, FastAPI, PostgreSQL, Redis, Docker\nEducation: Master of Science, Stanford 2024"
+        files2 = {"file": ("resume_v2.txt", res2_bytes, "text/plain")}
+        await client.post("/api/v1/resume/upload", files=files2, headers=headers)
+
+        # Profile is updated to reflect new resume skills
+        prof2 = (await client.get("/api/v1/profile", headers=headers)).json()
+        assert "FastAPI" in prof2["skills"]
+        assert "PostgreSQL" in prof2["skills"]
+
+        # Latest current resume is resume_v2.txt
+        curr = (await client.get("/api/v1/resume/current", headers=headers)).json()
+        assert curr["filename"] == "resume_v2.txt"
+        assert "FastAPI" in curr["resume_profile"]["skills"]
+
+# 33. Failed replacement does not destroy or corrupt existing valid resume
+@pytest.mark.asyncio
+async def test_failed_replacement_preserves_existing_resume():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token, _ = await register_and_get_token(client)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Upload initial valid resume
+        valid_bytes = b"Valid Developer\nSkills: Python, SQL"
+        files = {"file": ("valid.txt", valid_bytes, "text/plain")}
+        await client.post("/api/v1/resume/upload", files=files, headers=headers)
+
+        # Attempt invalid replacement with empty or corrupt file
+        corrupt_files = {"file": ("corrupt.txt", b"", "text/plain")}
+        fail_res = await client.post("/api/v1/resume/upload", files=corrupt_files, headers=headers)
+        assert fail_res.status_code == 400
+
+        # Existing valid resume must still be active and intact
+        curr = (await client.get("/api/v1/resume/current", headers=headers)).json()
+        assert curr["filename"] == "valid.txt"
+        assert "Python" in curr["resume_profile"]["skills"]
+
+# 34. Two different resumes produce distinct, accurate role recommendations
+@pytest.mark.asyncio
+async def test_two_different_resumes_produce_different_role_matches():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Initialize companies
+        await client.get("/api/v1/companies")
+
+        # Candidate A: Frontend Heavy
+        token_a, _ = await register_and_get_token(client)
+        headers_a = {"Authorization": f"Bearer {token_a}"}
+        fe_resume = b"Alex Frontend\nSkills: React, Next.js, TypeScript, JavaScript\nEducation: B.Tech in CS 2024"
+        files_a = {"file": ("alex_fe.txt", fe_resume, "text/plain")}
+        await client.post("/api/v1/resume/upload", files=files_a, headers=headers_a)
+
+        matches_a = (await client.get("/api/v1/jobs/matches", headers=headers_a)).json()
+        assert len(matches_a) > 0
+        top_role_a = matches_a[0]["role_title"]
+
+        # Candidate B: Data / ML Heavy
+        token_b, _ = await register_and_get_token(client)
+        headers_b = {"Authorization": f"Bearer {token_b}"}
+        ml_resume = b"Dana Data\nSkills: Python, PyTorch, TensorFlow, Machine Learning, Pandas\nEducation: M.S. Data Science 2024"
+        files_b = {"file": ("dana_ml.txt", ml_resume, "text/plain")}
+        await client.post("/api/v1/resume/upload", files=files_b, headers=headers_b)
+
+        matches_b = (await client.get("/api/v1/jobs/matches", headers=headers_b)).json()
+        assert len(matches_b) > 0
+        top_role_b = matches_b[0]["role_title"]
+
+        # Assert that the two candidates have different top role matches and distinct skills
+        assert top_role_a != top_role_b or matches_a[0]["overall_score"] != matches_b[0]["overall_score"]
+        assert "React" in matches_a[0]["matched_skills"] or "TypeScript" in matches_a[0]["matched_skills"]
+        assert "Python" in matches_b[0]["matched_skills"] or "PyTorch" in matches_b[0]["matched_skills"]
+
+# 35. Malformed/unparseable binary file returns clear error to candidate
+@pytest.mark.asyncio
+async def test_corrupt_malformed_resume_returns_error():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token, _ = await register_and_get_token(client)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Corrupted PDF with garbage non-PDF bytes
+        corrupt_pdf_bytes = b"NOT_A_REAL_PDF_HEADER_JUST_GARBAGE_BYTES_12345"
+        files = {"file": ("bad.pdf", corrupt_pdf_bytes, "application/pdf")}
+        res = await client.post("/api/v1/resume/upload", files=files, headers=headers)
+        assert res.status_code == 400
+        assert "Invalid PDF" in res.json()["detail"] or "Failed to read" in res.json()["detail"]

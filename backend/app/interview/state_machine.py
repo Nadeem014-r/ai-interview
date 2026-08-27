@@ -35,8 +35,8 @@ class AdaptiveStateMachine:
         itype = (interview_type or "technical").lower()
         duration = max(60, total_duration_seconds or 1800)
 
-        # Wrap-up condition: less than 15% time remaining or <= 120 seconds or question budget high
-        if time_remaining_seconds <= 120 or time_remaining_seconds < (duration * 0.15) or questions_asked >= 8:
+        # Wrap-up condition: less than 10% time remaining or <= 90 seconds or hard cap of 25 turns reached
+        if time_remaining_seconds <= 90 or time_remaining_seconds < (duration * 0.10) or questions_asked >= 25:
             return "wrapup"
 
         if questions_asked == 0:
@@ -49,8 +49,10 @@ class AdaptiveStateMachine:
             return "deep_dive" if itype == "technical" else "behavioral"
         elif questions_asked == 6:
             return "resume_discussion"
+        elif questions_asked in [7, 8]:
+            return "behavioral" if itype == "technical" else "core"
         else:
-            return "behavioral" if itype != "hr" else "wrapup"
+            return "core" if itype == "technical" else "behavioral"
 
     @staticmethod
     def validate_transition(current_stage: str, next_stage: str) -> bool:
