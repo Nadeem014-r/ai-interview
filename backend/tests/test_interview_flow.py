@@ -208,3 +208,73 @@ async def test_interview_stage_progression_warmup_to_technical_to_wrapup():
 
         # Next question should be present
         assert t1_data["next_question"] is not None
+
+
+@pytest.mark.asyncio
+async def test_struggling_candidate_recovery_and_conclusion_api_flow():
+    """Verify live flow: candidate struggles -> recovery question generated -> recovery answer submitted -> completed without 500 error."""
+    import uuid
+    from httpx import AsyncClient, ASGITransport
+    from app.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        comps = (await client.get("/api/v1/companies")).json()
+        roles = (await client.get(f"/api/v1/companies/{comps[0]['id']}/roles")).json()
+
+        email = f"cand_recov_{uuid.uuid4().hex[:8]}@example.com"
+        reg = await client.post("/api/v1/auth/register", json={
+            "email": email,
+            "password": "Password123!",
+            "full_name": "Recovery Candidate"
+        })
+        token = reg.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Start interview
+        res = await client.post("/api/v1/interviews", json={
+            "company_id": comps[0]["id"],
+            "role_id": roles[0]["id"],
+            "mode": "text",
+            "interview_type": "technical",
+            "duration_minutes": 15,
+            "target_level": "entry"
+        }, headers=headers)
+        assert res.status_code == 200
+        interview_id = res.json()["id"]
+
+        # Turn 1: Warmup answered poorly
+        turn1 = await client.post(f"/api/v1/interviews/{interview_id}/answer", json={
+            "answer_text": "no"
+        }, headers=headers)
+        assert turn1.status_code == 200
+        t1_data = turn1.json()
+        assert t1_data["is_completed"] is False
+
+        # Turn 2: Question 2 answered poorly -> Triggers Recovery Question
+        turn2 = await client.post(f"/api/v1/interviews/{interview_id}/answer", json={
+            "answer_text": "no"
+        }, headers=headers)
+        assert turn2.status_code == 200
+        t2_data = turn2.json()
+        assert t2_data["is_completed"] is False
+        assert t2_data["next_question"] is not None
+        assert t2_data["interview_state"]["interview_stage"] == "recovery"
+
+        # Turn 3: Submitting answer to the Recovery Question MUST succeed without 500 error and conclude politely
+        turn3 = await client.post(f"/api/v1/interviews/{interview_id}/answer", json={
+            "answer_text": "no"
+        }, headers=headers)
+        assert turn3.status_code == 200
+        t3_data = turn3.json()
+        assert t3_data["is_completed"] is True
+        assert t3_data["closing_message"] is not None
+        assert "Thank you" in t3_data["closing_message"]
+
+        # Turn 4: Submitting answer when interview completed returns idempotent 200 response without error
+        turn4 = await client.post(f"/api/v1/interviews/{interview_id}/answer", json={
+            "answer_text": "extra answer"
+        }, headers=headers)
+        assert turn4.status_code == 200
+        t4_data = turn4.json()
+        assert t4_data["is_completed"] is True
+

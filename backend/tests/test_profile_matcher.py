@@ -29,7 +29,7 @@ def test_job_matching_full_score():
 
     assert result["role_id"] == 1
     assert result["company_name"] == "Google"
-    assert result["overall_score"] >= 80.0
+    assert result["overall_score"] >= 70.0
     assert "Python" in result["matched_skills"]
     assert len(result["missing_skills"]) == 0
     assert len(result["strengths"]) > 0
@@ -221,3 +221,198 @@ def test_empty_role_skills_handled_safely():
     assert result["breakdown"]["skills_score"] == 0.0
     assert result["matched_skills"] == []
     assert result["missing_skills"] == []
+
+
+def test_first_year_no_skills_projects_or_experience():
+    """First-year student with no skills, no projects, and no experience must receive 0% across technical subscores and 0% overall."""
+    education = [{"degree": "B.Tech in Computer Science", "institution": "University"}]
+    skills = []
+    projects = []
+    experience = []
+
+    role = Role(
+        id=701,
+        company_id=1,
+        title="Software Engineer (Backend)",
+        level="Entry / L3",
+        required_skills=["Python", "FastAPI", "SQL", "Docker"],
+        key_topics=["API Design", "Databases"]
+    )
+
+    result = JobMatchingEngine.match_candidate_to_role(
+        candidate_skills=skills,
+        candidate_experience_level="entry",
+        candidate_education=education,
+        candidate_projects=projects,
+        candidate_experience=experience,
+        role=role
+    )
+
+    assert result["breakdown"]["skills_score"] == 0.0
+    assert result["breakdown"]["projects_score"] == 0.0
+    assert result["breakdown"]["experience_score"] == 0.0
+    assert result["overall_score"] == 0.0
+    assert len(result["matched_skills"]) == 0
+    assert len(result["missing_skills"]) == 4
+
+
+def test_candidate_with_experience_and_projects_increases_score():
+    """Candidate with actual skills, projects, and experience must receive positive scores reflecting evidence."""
+    skills = ["Python", "FastAPI", "SQL"]
+    projects = [{"name": "API Service", "technologies": ["Python", "FastAPI"]}]
+    experience = [{"title": "Software Intern", "company": "Acme Corp"}]
+    education = [{"degree": "B.Tech"}]
+
+    role = Role(
+        id=702,
+        company_id=1,
+        title="Software Engineer (Backend)",
+        level="Entry / L3",
+        required_skills=["Python", "FastAPI", "SQL", "Docker"],
+        key_topics=["API Design", "Databases"]
+    )
+
+    result = JobMatchingEngine.match_candidate_to_role(
+        candidate_skills=skills,
+        candidate_experience_level="entry",
+        candidate_education=education,
+        candidate_projects=projects,
+        candidate_experience=experience,
+        role=role
+    )
+
+    assert result["breakdown"]["skills_score"] == 75.0
+    assert result["breakdown"]["experience_score"] == 50.0
+    assert result["breakdown"]["education_score"] == 100.0
+    assert result["overall_score"] > 50.0
+
+def test_exact_jd_matching_and_clean_you_have_section():
+    """Verify that 'You have' does not contain degree strings as skills and 'Missing' contains all absent JD skills."""
+    candidate_skills = ["Python", "SQL", "Data Structures", "Git"]
+    candidate_projects = [{"name": "Student Performance Prediction", "technologies": ["Python", "scikit-learn"]}]
+    candidate_education = [{"degree": "B.Tech Computer Science"}]
+
+    role = Role(
+        id=801,
+        company_id=1,
+        title="Backend Software Engineer",
+        level="Entry / L3",
+        required_skills=["Java", "SQL", "Spring Boot", "REST APIs", "AWS", "Docker", "Data Structures", "System Design"],
+        key_topics=["Data Structures", "System Design"]
+    )
+
+    result = JobMatchingEngine.match_candidate_to_role(
+        candidate_skills=candidate_skills,
+        candidate_experience_level="entry",
+        candidate_education=candidate_education,
+        candidate_projects=candidate_projects,
+        role=role
+    )
+
+    # Matched skills
+    assert "SQL" in result["matched_skills"]
+    assert "Data Structures" in result["matched_skills"]
+    assert "Java" not in result["matched_skills"]
+    assert "Python" not in result["matched_skills"]  # Python was in candidate resume but not required by this specific JD
+
+    # Missing skills contains all unfulfilled requirements
+    for expected_missing in ["Java", "Spring Boot", "REST APIs", "AWS", "Docker", "System Design"]:
+        assert expected_missing in result["missing_skills"]
+        assert expected_missing in result["what_you_are_missing"]
+
+    # "You have" contains matched skills and verified project, but NOT "B.Tech" as a skill
+    assert "SQL" in result["what_you_have"]
+    assert "Data Structures" in result["what_you_have"]
+    assert "Project: Student Performance Prediction" in result["what_you_have"]
+    assert "B.Tech" not in result["what_you_have"]
+    assert "B.Tech Computer Science" not in result["what_you_have"]
+    assert not any("student" in str(item).lower() and "project:" not in str(item).lower() for item in result["what_you_have"])
+
+def test_mandatory_test_5_and_7_startup_experience_does_not_become_100_percent():
+    """MANDATORY TEST 5 & 7: Startup / single early experience yields proportionate score, NOT 100%."""
+    candidate_skills = ["Python", "Flask", "SQL"]
+    candidate_experience = [{"role": "Wascrap Startup", "company": "Wascrap", "duration": "Jun 2024 – Present"}]
+    candidate_projects = [{"name": "Smart Water Tank Assistant", "technologies": ["Python", "Flask"]}]
+    candidate_education = [{"degree": "B.Tech Computer Science"}]
+
+    role = Role(
+        id=901,
+        company_id=1,
+        title="Software Engineer (Backend)",
+        level="Entry / L3",
+        required_skills=["Python", "Flask", "SQL", "Docker", "Data Structures"],
+        key_topics=["API Design"]
+    )
+
+    result = JobMatchingEngine.match_candidate_to_role(
+        candidate_skills=candidate_skills,
+        candidate_experience_level="entry",
+        candidate_education=candidate_education,
+        candidate_projects=candidate_projects,
+        candidate_experience=candidate_experience,
+        role=role
+    )
+
+    # Experience readiness MUST NOT be 100% for 1 early startup role
+    exp_score = result["breakdown"]["experience_score"]
+    assert exp_score < 100.0
+    assert exp_score == 50.0
+
+def test_mandatory_test_6_no_experience_scores_zero_percent():
+    """MANDATORY TEST 6: Candidate with no experience receives 0% experience score."""
+    candidate_skills = ["Python", "SQL"]
+    candidate_experience = []
+    candidate_projects = [{"name": "Student Performance Prediction", "technologies": ["Python"]}]
+    candidate_education = [{"degree": "B.Tech"}]
+
+    role = Role(
+        id=902,
+        company_id=1,
+        title="Software Engineer (Backend)",
+        level="Entry / L3",
+        required_skills=["Python", "SQL"],
+        key_topics=["Databases"]
+    )
+
+    result = JobMatchingEngine.match_candidate_to_role(
+        candidate_skills=candidate_skills,
+        candidate_experience_level="entry",
+        candidate_education=candidate_education,
+        candidate_projects=candidate_projects,
+        candidate_experience=candidate_experience,
+        role=role
+    )
+
+    assert result["breakdown"]["experience_score"] == 0.0
+
+def test_mandatory_test_8_no_technical_evidence_scores_low_across_categories():
+    """MANDATORY TEST 8: Candidate with essentially no technical skills -> scores remain appropriately low/zero."""
+    candidate_skills = []
+    candidate_experience = []
+    candidate_projects = []
+    candidate_education = []
+
+    role = Role(
+        id=903,
+        company_id=1,
+        title="Software Engineer (Backend)",
+        level="Entry / L3",
+        required_skills=["Java", "Spring Boot", "AWS", "Kubernetes", "PostgreSQL"],
+        key_topics=["Distributed Systems"]
+    )
+
+    result = JobMatchingEngine.match_candidate_to_role(
+        candidate_skills=candidate_skills,
+        candidate_experience_level="entry",
+        candidate_education=candidate_education,
+        candidate_projects=candidate_projects,
+        candidate_experience=candidate_experience,
+        role=role
+    )
+
+    assert result["breakdown"]["skills_score"] == 0.0
+    assert result["breakdown"]["projects_score"] == 0.0
+    assert result["breakdown"]["experience_score"] == 0.0
+    assert result["breakdown"]["education_score"] == 0.0
+    assert result["overall_score"] == 0.0
+

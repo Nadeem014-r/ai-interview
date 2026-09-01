@@ -387,7 +387,7 @@ def test_cert_circuit_breaker_state_machine():
         cb.before_call()
 
     # After recovery timeout -> before_call transitions to HALF_OPEN probe state
-    time.sleep(0.06)
+    time.sleep(0.15)
     cb.before_call()
     assert cb.state == CircuitState.HALF_OPEN
 

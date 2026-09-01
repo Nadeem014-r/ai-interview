@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     
     DEFAULT_LLM_PROVIDER: str = "gemini"
     DEFAULT_EMBEDDING_PROVIDER: str = "mock"
-    DEFAULT_STT_PROVIDER: str = "mock"
-    DEFAULT_TTS_PROVIDER: str = "mock"
+    DEFAULT_STT_PROVIDER: str = "whisper"
+    DEFAULT_TTS_PROVIDER: str = "kokoro"
     
     GEMINI_API_KEY: str = ""
     GEMINI_DEFAULT_MODEL: str = "gemini-3.6-flash"

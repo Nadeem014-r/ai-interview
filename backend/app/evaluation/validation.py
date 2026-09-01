@@ -209,6 +209,27 @@ def is_off_topic_response(
     return False
 
 
+MINIMAL_NON_SUBSTANTIVE_TOKENS = {
+    "yes", "no", "ok", "okay", "nope", "yeah", "yep", "sure", "na", "n/a", "none", "fine", "cool", "maybe", "idk"
+}
+
+
+def is_minimal_or_non_substantive_response(text: Optional[str]) -> bool:
+    """
+    Detects 1-2 word non-explanatory answers like 'yes', 'no', 'ok', 'nope', 'yeah'
+    which contain insufficient substance to demonstrate knowledge or communication competence.
+    """
+    if is_empty_response(text):
+        return False
+    clean = text.strip().lower()
+    tokens = re.findall(r'\b[a-z0-9_]+\b', clean)
+    if len(tokens) == 1 and tokens[0] in MINIMAL_NON_SUBSTANTIVE_TOKENS:
+        return True
+    if len(tokens) == 2 and all(t in MINIMAL_NON_SUBSTANTIVE_TOKENS for t in tokens):
+        return True
+    return False
+
+
 def classify_response_quality_state(
     safe_answer: str,
     topic: str,
@@ -221,6 +242,7 @@ def classify_response_quality_state(
     - EMPTY
     - EXPLICIT_UNKNOWN
     - GIBBERISH
+    - MINIMAL_NON_SUBSTANTIVE
     - OFF_TOPIC
     - EVASIVE
     - VALID_CANDIDATE_ANSWER
@@ -231,6 +253,8 @@ def classify_response_quality_state(
         return "EXPLICIT_UNKNOWN"
     if is_gibberish_or_nonlanguage(safe_answer):
         return "GIBBERISH"
+    if is_minimal_or_non_substantive_response(safe_answer):
+        return "MINIMAL_NON_SUBSTANTIVE"
     if is_off_topic_response(safe_answer, topic, expected_concepts, question_text):
         return "OFF_TOPIC"
     return "VALID_CANDIDATE_ANSWER"

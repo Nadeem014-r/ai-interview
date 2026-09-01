@@ -57,25 +57,36 @@ class InterviewPersonaBuilder:
         company_name = company.name if company else "our team"
         role_title = role.title if role else "Software Engineer"
         culture_kw = ", ".join(company.culture_keywords[:3]) if (company and company.culture_keywords) else "engineering excellence"
-        cand_greeting = f"Hello {candidate_name.split()[0]}, " if candidate_name else "Hello, "
-
-        # LLM tailored dynamic warm-up generation with grounded fallback
+        
+        # Spoken greeting must NEVER include candidate personal name
+        # Dynamic warm-up generation with grounded fallback
         llm = AIFactory.get_llm_provider()
+        # Bug Fix 3: bind greeting to session role/company — never hardcoded
+        dynamic_greeting = (
+            f"Hi, welcome to the interview for the {role_title} role at {company_name}!"
+        )
+        greeting_instruction = (
+            f"Open naturally with: '{dynamic_greeting}' or a close variant. "
+            "NEVER include the candidate's personal name in any spoken greeting."
+        )
+
         prompt = f"""
-Generate a warm, professional, non-technical Stage 1 warm-up interview question (question #{question_index + 1} of interview).
+Generate a warm, professional, non-technical Stage 1 warm-up interview opening question (question #{question_index + 1} of interview).
 Interviewer: Senior Technical Hiring Manager at {company_name}
 Target Role: {role_title}
 Company Culture Focus: {culture_kw}
 Candidate Background Context: {resume_context or "Recent graduate / candidate"}
 
 RULES FOR WARM-UP QUESTIONS:
-- Do NOT ask technical algorithms, syntax, or textbook definitions.
-- Focus strictly on personal journey, background introduction, motivation for {company_name}, or general collaboration style.
-- Include natural conversational framing from {company_name}.
+1. GREETING: {greeting_instruction}
+2. Do NOT ask technical algorithms, coding syntax, or textbook definitions in this warm-up.
+3. Ask a natural conversational question inviting them to briefly introduce themselves, their background, or what drew them to {company_name}.
+4. Keep the question conversational, natural, and concise.
+5. Under NO circumstances include or speak the candidate's personal name.
 
 Return JSON:
 {{
-    "question_text": "The personal warm-up question text",
+    "question_text": "The personal warm-up question text starting with a natural non-personalized greeting",
     "expected_concepts": ["Clear communication", "Self-introduction", "Company alignment"],
     "follow_ups": ["What specific aspect of our engineering culture resonates with you most?"]
 }}
@@ -86,8 +97,15 @@ Return JSON:
                 system_prompt=f"You are a friendly yet discerning senior hiring manager at {company_name} opening an interview."
             )
             if res and isinstance(res, dict) and res.get("question_text"):
+                q_text = res["question_text"].strip()
+                # Clean up any generic or name-inserted prefixes
+                for generic in ["Hi there,", "Hello there,", "Hi there", "Hello there", "Hey there,"]:
+                    if q_text.startswith(generic):
+                        # Bug Fix 3: replace with dynamic greeting, not static one
+                        q_text = q_text.replace(generic, dynamic_greeting + " ", 1).strip()
+
                 return {
-                    "question_text": res["question_text"],
+                    "question_text": q_text,
                     "expected_concepts": res.get("expected_concepts", ["Clear communication", "Self-introduction", "Company alignment"]),
                     "follow_ups": res.get("follow_ups", ["Can you elaborate on your motivation for this role?"]),
                     "topic": "Introduction & Motivation",
@@ -98,13 +116,14 @@ Return JSON:
             pass
 
         # Deterministic company-tailored warm-up fallbacks
+        # Bug Fix 3: deterministic fallback also uses dynamic role/company binding
         if question_index == 0:
             q_text = (
-                f"{cand_greeting}welcome to your interview for the {role_title} role at {company_name}! "
-                f"To start off, could you tell me a little bit about yourself, your educational background, "
-                f"and what specifically drew you to apply to {company_name}?"
+                f"Hi, welcome to the interview for the {role_title} role at {company_name}! "
+                "To start off, could you briefly introduce yourself and share a bit about your educational background and projects?"
             )
             concepts = ["Personal introduction", "Educational background", f"Interest in {company_name}"]
+
         elif question_index == 1:
             q_text = (
                 f"Thank you for sharing that. Looking at your journey, what has been your most rewarding project or experience so far, "
@@ -126,3 +145,37 @@ Return JSON:
             "question_type": "hr",
             "difficulty": "easy"
         }
+
+    @staticmethod
+    async def generate_recovery_question(
+        company: Optional[Company] = None,
+        role: Optional[Role] = None,
+        candidate_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generates a supportive, professional recovery question giving the struggling candidate
+        an opportunity to explain something they know, built, or are comfortable with.
+        """
+        return {
+            "question_text": "I see. That's completely okay. Let's take a step back. Can you tell me about a technology, project, or concept that you have personally worked with and feel most comfortable explaining?",
+            "expected_concepts": ["Demonstrated personal project", "Core technology familiarity", "Clear communication"],
+            "follow_ups": ["What was your role in that project, and what technical challenges did you solve?"],
+            "topic": "Practical Project & Skills Overview",
+            "question_type": "technical",
+            "difficulty": "easy"
+        }
+
+    @staticmethod
+    def get_early_conclusion_statement(
+        company: Optional[Company] = None,
+        candidate_name: Optional[str] = None
+    ) -> str:
+        """
+        Produces a respectful, professional early conclusion message without candidate name.
+        """
+        comp_text = f" with {company.name}" if company and getattr(company, "name", None) else ""
+        return (
+            f"Thank you for your time today. I appreciate you taking the interview{comp_text}. "
+            "We will conclude the interview here. Thank you again, and have a wonderful day."
+        )
+

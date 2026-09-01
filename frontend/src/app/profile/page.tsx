@@ -1,221 +1,291 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Navbar } from "@/components/Navbar";
+import { useRouter } from "next/navigation";
+import { WorkspaceLayout } from "@/components/WorkspaceLayout";
 import { apiRequest } from "@/lib/api";
+import { requireAuth } from "@/lib/auth";
 import { CandidateProfile } from "@/types";
-import { User, Save, CheckCircle2, GraduationCap, Code2 } from "lucide-react";
+import { User, Save, CheckCircle2, AlertCircle } from "lucide-react";
 
 export default function ProfilePage() {
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [headline, setHeadline] = useState("");
-  const [targetRole, setTargetRole] = useState("");
-  const [level, setLevel] = useState("entry");
-  const [university, setUniversity] = useState("");
-  const [degree, setDegree] = useState("");
-  const [branch, setBranch] = useState("");
-  const [gradYear, setGradYear] = useState<number | "">("");
+  const router = useRouter();
+  const [profile, setProfile] = useState<CandidateProfile>({
+    full_name: "",
+    email: "",
+    target_role: "",
+    university: "",
+    degree: "",
+    graduation_year: undefined,
+    skills: [],
+    experience_years: undefined,
+    bio: ""
+  });
   const [skillsStr, setSkillsStr] = useState("");
-  const [bio, setBio] = useState("");
-  const [githubUrl, setGithubUrl] = useState("");
-  const [linkedinUrl, setLinkedinUrl] = useState("");
-  const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [successMsg, setSuccessMsg] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
-    async function loadProfile() {
-      try {
-        const prof: CandidateProfile = await apiRequest("/profile");
-        if (prof) {
-          setFullName(prof.full_name || "");
-          setEmail(prof.email || "");
-          setPhone(prof.phone || "");
-          setHeadline(prof.headline || "");
-          setTargetRole(prof.target_role || "");
-          setLevel(prof.experience_level || "entry");
-          setUniversity(prof.university || "");
-          setDegree(prof.degree || "");
-          setBranch(prof.branch || "");
-          setGradYear(prof.graduation_year || "");
-          setSkillsStr(prof.skills ? prof.skills.join(", ") : "");
-          setBio(prof.bio || "");
-          setGithubUrl(prof.github_url || "");
-          setLinkedinUrl(prof.linkedin_url || "");
-        }
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
+    if (requireAuth(router)) {
+      loadProfile();
     }
-    loadProfile();
   }, []);
+
+  async function loadProfile() {
+    try {
+      const data: any = await apiRequest("/profile");
+      if (data) {
+        setProfile(data);
+        if (data.skills) {
+          setSkillsStr(data.skills.join(", "));
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSaved(false);
+    setSaving(true);
+    setSuccessMsg("");
+    setErrorMsg("");
+
     try {
       const skillsArray = skillsStr
         .split(",")
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
 
+      const payload = {
+        ...profile,
+        skills: skillsArray,
+        graduation_year: profile.graduation_year ? Number(profile.graduation_year) : undefined,
+        experience_years: profile.experience_years ? Number(profile.experience_years) : undefined
+      };
+
       await apiRequest("/profile", {
         method: "PUT",
-        body: JSON.stringify({
-          full_name: fullName,
-          phone,
-          headline,
-          target_role: targetRole,
-          experience_level: level,
-          university,
-          degree,
-          branch,
-          graduation_year: gradYear ? Number(gradYear) : null,
-          skills: skillsArray,
-          bio,
-          github_url: githubUrl,
-          linkedin_url: linkedinUrl
-        })
+        body: JSON.stringify(payload)
       });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 4000);
+      setSuccessMsg("Candidate profile settings saved successfully.");
+      setTimeout(() => setSuccessMsg(""), 3000);
     } catch (err: any) {
-      alert(err.message || "Failed to update profile.");
+      setErrorMsg(err.message || "Failed to update profile settings.");
+    } finally {
+      setSaving(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div style={{ minHeight: "100vh", backgroundColor: "#f8fafc" }}>
-        <Navbar />
-        <div style={{ textAlign: "center", padding: "4rem", color: "#64748b" }}>
-          Loading candidate profile...
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div style={{ minHeight: "100vh", backgroundColor: "#f8fafc" }}>
-      <Navbar />
-      <main style={{ maxWidth: "850px", margin: "0 auto", padding: "2.5rem 1.5rem" }}>
-        <div className="saas-card" style={{ padding: "2.25rem", backgroundColor: "#ffffff", borderRadius: "16px", border: "1px solid #e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1.5rem" }}>
-            <div style={{ backgroundColor: "#eef2ff", padding: "0.5rem", borderRadius: "10px", color: "#4f46e5" }}>
-              <User size={24} />
-            </div>
-            <div>
-              <h1 style={{ margin: 0, fontSize: "1.5rem", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.03em" }}>Candidate Profile & Placement Settings</h1>
-              <span style={{ fontSize: "0.85rem", color: "#64748b" }}>Information is persisted in the PostgreSQL/SQLite database</span>
+    <WorkspaceLayout sectionTitle="Settings" sectionSubtitle="Personal, academic, and interview preparation preferences">
+      <div style={{ maxWidth: "800px" }}>
+        <div style={{ marginBottom: "1.5rem" }}>
+          <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "#09090b", letterSpacing: "-0.02em", margin: 0 }}>
+            Account & Placement Profile Settings
+          </h2>
+          <p style={{ color: "#71717a", fontSize: "0.85rem", marginTop: "0.2rem" }}>
+            Update your academic background and preferred engineering domains to improve question tailoring.
+          </p>
+        </div>
+
+        {successMsg && (
+          <div style={{ padding: "0.65rem 1rem", backgroundColor: "var(--accent-emerald-light)", border: "1px solid #a7f3d0", borderRadius: "8px", color: "var(--accent-emerald)", fontSize: "0.85rem", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.45rem" }}>
+            <CheckCircle2 size={15} /> {successMsg}
+          </div>
+        )}
+
+        {errorMsg && (
+          <div style={{ padding: "0.65rem 1rem", backgroundColor: "var(--accent-rose-light)", border: "1px solid #fecdd3", borderRadius: "8px", color: "var(--accent-rose)", fontSize: "0.85rem", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.45rem" }}>
+            <AlertCircle size={15} /> {errorMsg}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+          {/* Personal Information */}
+          <div className="saas-card" style={{ padding: "1.5rem" }}>
+            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "1rem" }}>
+              Personal Details
+            </h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Full Name</label>
+                <input
+                  type="text"
+                  required
+                  value={profile.full_name || ""}
+                  onChange={(e) => setProfile({ ...profile, full_name: e.target.value })}
+                  className="form-input"
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Email Address</label>
+                <input
+                  type="email"
+                  disabled
+                  value={profile.email || ""}
+                  className="form-input"
+                  style={{ backgroundColor: "#f4f4f5", cursor: "not-allowed" }}
+                />
+              </div>
             </div>
           </div>
 
-          {saved && (
-            <div style={{ padding: "0.75rem 1rem", backgroundColor: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: "10px", color: "#047857", fontSize: "0.85rem", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <CheckCircle2 size={16} /> Candidate profile updated and persisted successfully!
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-            {/* Personal Details */}
-            <div style={{ borderBottom: "1px solid #f1f5f9", paddingBottom: "1.25rem" }}>
-              <h2 style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a", marginBottom: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                <User size={16} color="#4f46e5" /> Personal & Contact Info
-              </h2>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Full Name</label>
-                  <input type="text" required value={fullName} onChange={(e) => setFullName(e.target.value)} className="form-input" placeholder="Alex Mercer" />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Email Address</label>
-                  <input type="email" disabled value={email} className="form-input" style={{ opacity: 0.7, cursor: "not-allowed", backgroundColor: "#f8fafc" }} />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Phone Number</label>
-                  <input type="text" value={phone} onChange={(e) => setPhone(e.target.value)} className="form-input" placeholder="+1 (555) 019-2834" />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Professional Headline</label>
-                  <input type="text" value={headline} onChange={(e) => setHeadline(e.target.value)} className="form-input" placeholder="Aspiring Full-Stack & Systems Engineer" />
-                </div>
-              </div>
-            </div>
-
-            {/* Academic & University Details */}
-            <div style={{ borderBottom: "1px solid #f1f5f9", paddingBottom: "1.25rem" }}>
-              <h2 style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a", marginBottom: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                <GraduationCap size={16} color="#4f46e5" /> Education & Academic Background
-              </h2>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>University / College</label>
-                  <input type="text" value={university} onChange={(e) => setUniversity(e.target.value)} className="form-input" placeholder="National Institute of Technology" />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Degree</label>
-                  <input type="text" value={degree} onChange={(e) => setDegree(e.target.value)} className="form-input" placeholder="B.Tech" />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Branch / Major</label>
-                  <input type="text" value={branch} onChange={(e) => setBranch(e.target.value)} className="form-input" placeholder="Computer Science & Engineering" />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Graduation Year</label>
-                  <input type="number" value={gradYear} onChange={(e) => setGradYear(e.target.value ? Number(e.target.value) : "")} className="form-input" placeholder="2025" />
-                </div>
-              </div>
-            </div>
-
-            {/* Career & Skills */}
-            <div style={{ borderBottom: "1px solid #f1f5f9", paddingBottom: "1.25rem" }}>
-              <h2 style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a", marginBottom: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                <Code2 size={16} color="#059669" /> Technical Skills & Target Role
-              </h2>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Primary Target Role</label>
-                  <input type="text" value={targetRole} onChange={(e) => setTargetRole(e.target.value)} className="form-input" placeholder="Software Engineer (Backend)" />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Target Seniority / Level</label>
-                  <select value={level} onChange={(e) => setLevel(e.target.value)} className="form-input">
-                    <option value="entry">Entry Level / Graduate (L3)</option>
-                    <option value="mid">Mid Level Engineer (L4)</option>
-                    <option value="senior">Senior Engineer (L5)</option>
-                  </select>
-                </div>
-              </div>
-
+          {/* Academic Credentials */}
+          <div className="saas-card" style={{ padding: "1.5rem" }}>
+            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "1rem" }}>
+              Academic Background
+            </h3>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
               <div>
-                <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>
-                  Skills & Technologies (comma-separated)
-                </label>
+                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>University / College</label>
                 <input
                   type="text"
-                  value={skillsStr}
-                  onChange={(e) => setSkillsStr(e.target.value)}
+                  value={profile.university || ""}
+                  onChange={(e) => setProfile({ ...profile, university: e.target.value })}
                   className="form-input"
-                  placeholder="Python, FastAPI, PostgreSQL, Docker, Data Structures, Redis"
+                  placeholder="Stanford University"
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Graduation Year</label>
+                <input
+                  type="number"
+                  value={profile.graduation_year || ""}
+                  onChange={(e) => setProfile({ ...profile, graduation_year: e.target.value ? Number(e.target.value) : undefined })}
+                  className="form-input"
+                  placeholder="2026"
+                />
+              </div>
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Degree Program</label>
+              <input
+                type="text"
+                value={profile.degree || ""}
+                onChange={(e) => setProfile({ ...profile, degree: e.target.value })}
+                className="form-input"
+                placeholder="B.S. in Computer Science"
+              />
+            </div>
+          </div>
+
+          {/* Technical Alignment & Skills */}
+          <div className="saas-card" style={{ padding: "1.5rem" }}>
+            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "1rem" }}>
+              Technical Alignment
+            </h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Target Role Title</label>
+                <input
+                  type="text"
+                  value={profile.target_role || ""}
+                  onChange={(e) => setProfile({ ...profile, target_role: e.target.value })}
+                  className="form-input"
+                  placeholder="Software Engineer (Backend)"
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Years of Experience</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  value={profile.experience_years ?? ""}
+                  onChange={(e) => setProfile({ ...profile, experience_years: e.target.value ? Number(e.target.value) : undefined })}
+                  className="form-input"
+                  placeholder="0"
                 />
               </div>
             </div>
 
-            {/* Bio */}
             <div>
-              <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "0.35rem" }}>Bio & Technical Summary</label>
-              <textarea value={bio} onChange={(e) => setBio(e.target.value)} rows={3} className="form-input" placeholder="Brief summary of your background, areas of focus, and aspirations..." />
+              <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Core Skills (comma separated)</label>
+              <input
+                type="text"
+                value={skillsStr}
+                onChange={(e) => setSkillsStr(e.target.value)}
+                className="form-input"
+                placeholder="Python, FastAPI, React, PostgreSQL, Docker"
+              />
             </div>
+          </div>
 
-            <button type="submit" className="btn btn-primary" style={{ padding: "0.8rem", fontSize: "0.95rem", marginTop: "0.5rem" }}>
-              <Save size={16} /> Save & Persist Profile Changes
+          {/* Bio */}
+          <div className="saas-card" style={{ padding: "1.5rem" }}>
+            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "1rem" }}>
+              Professional Summary
+            </h3>
+            <textarea
+              rows={3}
+              value={profile.bio || ""}
+              onChange={(e) => setProfile({ ...profile, bio: e.target.value })}
+              className="form-input"
+              placeholder="Brief professional background or target career goals..."
+            />
+          </div>
+
+          {/* Extracted Projects */}
+          <div className="saas-card" style={{ padding: "1.5rem" }}>
+            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "0.75rem" }}>
+              Projects
+            </h3>
+            {profile.projects && profile.projects.length > 0 ? (
+              <ul style={{ listStyleType: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "0.45rem" }}>
+                {profile.projects.map((proj: any, idx: number) => {
+                  const title = typeof proj === "string" ? proj : (proj.title || proj.name || proj.heading || proj.project_name || `Project ${idx + 1}`);
+                  return (
+                    <li key={idx} style={{ fontSize: "0.85rem", color: "#09090b", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <span style={{ color: "#71717a", fontSize: "0.75rem" }}>•</span>
+                      <strong>{title}</strong>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p style={{ color: "#71717a", fontSize: "0.825rem", margin: 0 }}>
+                No projects extracted from resume yet.
+              </p>
+            )}
+          </div>
+
+          {/* Extracted Experience */}
+          <div className="saas-card" style={{ padding: "1.5rem" }}>
+            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "0.75rem" }}>
+              Experience
+            </h3>
+            {profile.experience && profile.experience.length > 0 ? (
+              <ul style={{ listStyleType: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "0.45rem" }}>
+                {profile.experience.map((exp: any, idx: number) => {
+                  const headline = typeof exp === "string"
+                    ? exp
+                    : `${exp.role || exp.title || "Role"}${exp.company ? ` at ${exp.company}` : ""}${exp.duration ? ` (${exp.duration})` : ""}`;
+                  return (
+                    <li key={idx} style={{ fontSize: "0.85rem", color: "#09090b", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <span style={{ color: "#71717a", fontSize: "0.75rem" }}>•</span>
+                      <strong>{headline}</strong>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p style={{ color: "#71717a", fontSize: "0.825rem", margin: 0 }}>
+                No experience extracted from resume yet.
+              </p>
+            )}
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button type="submit" disabled={saving} className="btn btn-primary" style={{ padding: "0.55rem 1.25rem", fontSize: "0.85rem" }}>
+              <Save size={14} /> <span>{saving ? "Saving Changes..." : "Save Settings"}</span>
             </button>
-          </form>
-        </div>
-      </main>
-    </div>
+          </div>
+        </form>
+      </div>
+    </WorkspaceLayout>
   );
 }

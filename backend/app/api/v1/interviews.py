@@ -281,6 +281,8 @@ async def submit_answer_turn(
 
     stmt = select(Interview).options(
         selectinload(Interview.state),
+        selectinload(Interview.company),
+        selectinload(Interview.role),
         selectinload(Interview.answers)
     ).where(Interview.id == interview_id)
     res = await db.execute(stmt)
@@ -291,7 +293,40 @@ async def submit_answer_turn(
         raise HTTPException(status_code=403, detail="Unauthorized to submit answer for this interview.")
 
     if interview.status == "completed":
-        raise HTTPException(status_code=400, detail="Interview session is already completed.")
+        st = interview.state
+        state_out = InterviewStateOut(
+            current_topic=st.current_topic if st else "Completed",
+            difficulty=st.difficulty if st else "medium",
+            time_remaining_seconds=0,
+            questions_asked_count=st.questions_asked_count if st else len(interview.answers),
+            current_question_id=None,
+            skill_scores=st.skill_scores if st else {},
+            weak_topics=st.weak_topics if st else [],
+            strong_topics=st.strong_topics if st else [],
+            covered_topics=st.covered_topics if st else [],
+            remaining_topics=[],
+            interview_stage=st.interview_stage if st else "completed"
+        )
+        return AnswerTurnResponse(
+            evaluation={
+                "correctness_score": 0.0,
+                "relevance_score": 0.0,
+                "reasoning_score": 0.0,
+                "depth_score": 0.0,
+                "communication_score": 0.0,
+                "overall_question_score": 0.0,
+                "feedback_text": "Interview session is completed.",
+                "evidence": [],
+                "confidence_score": 1.0,
+                "human_review_required": False
+            },
+            next_question=None,
+            interview_state=state_out,
+            is_completed=True,
+            closing_message="Thank you for completing your interview today. Your evaluation report is now available.",
+            termination_reason=st.interview_stage if st else "completed"
+        )
+
 
     engine = AdaptiveInterviewEngine(db)
     state = interview.state
@@ -392,10 +427,32 @@ async def submit_answer_turn(
         last_answer_text=answer_in.answer_text.strip()
     )
 
-    # If interview finished, trigger automatic report generation
+    # If interview finished, trigger automatic report generation and construct polite closing
+    closing_msg = None
+    term_reason = None
     if is_completed:
         report_gen = ReportGenerator(db)
         await report_gen.generate_interview_report(interview_id)
+        term_reason = updated_state.interview_stage or "completed"
+        if updated_state.interview_stage == "early_conclusion":
+            cand_name = None
+            stmt_u = select(User).where(User.id == user_id)
+            res_u = await db.execute(stmt_u)
+            u_obj = res_u.scalars().first()
+            if u_obj:
+                cand_name = u_obj.full_name
+            comp_obj = getattr(interview, "company", None)
+            if not comp_obj and interview.company_id:
+                stmt_c = select(Company).where(Company.id == interview.company_id)
+                res_c = await db.execute(stmt_c)
+                comp_obj = res_c.scalars().first()
+            from app.interview.persona import InterviewPersonaBuilder
+            closing_msg = InterviewPersonaBuilder.get_early_conclusion_statement(
+                company=comp_obj,
+                candidate_name=cand_name
+            )
+        else:
+            closing_msg = "Thank you for completing your interview today. We appreciate your time and participation. Your comprehensive evaluation report is now available."
 
     next_q_out = None
     if next_question:
@@ -428,8 +485,11 @@ async def submit_answer_turn(
         evaluation=eval_dict,
         next_question=next_q_out,
         interview_state=state_out,
-        is_completed=is_completed
+        is_completed=is_completed,
+        closing_message=closing_msg,
+        termination_reason=term_reason
     )
+
 
 @router.post("/{interview_id}/finish")
 async def finish_interview_session(

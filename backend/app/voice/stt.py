@@ -5,6 +5,7 @@ cancellation support, and safe exception normalization for speech transcription.
 """
 
 import asyncio
+import re
 from typing import Dict, Any, Optional
 
 from app.ai.factory import AIFactory
@@ -21,6 +22,37 @@ from app.voice.exceptions import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Bug Fix 2 – Silence-hallucination post-filter
+# Collapses repeated short phrases produced during silence / background noise.
+# ---------------------------------------------------------------------------
+_HALLUCINATION_REPEAT_RE = re.compile(
+    r'(\b[\w\s]{1,15}\b)(?:\s*\1){3,}',
+    re.IGNORECASE
+)
+
+def deduplicate_hallucination(text: str) -> str:
+    """
+    Collapse runs of a repeated short phrase (e.g. "Okay. Okay. Okay. Okay.")
+    into a single instance.  If the entire transcript degenerates into such
+    filler, return an empty string so the caller can discard it as silence.
+    """
+    if not text:
+        return text
+    # Replace repeated-phrase run with a single occurrence
+    collapsed = _HALLUCINATION_REPEAT_RE.sub(r'\1', text)
+    # Secondary pass: remove runs of the same word/punctuation token
+    collapsed = re.sub(r'\b(\w+)(?:\s+\1){3,}\b', r'\1', collapsed, flags=re.IGNORECASE)
+    collapsed = collapsed.strip()
+    # If the result is only 1–2 distinct words after collapsing, treat as filler
+    distinct_words = set(w.lower() for w in re.findall(r'[a-zA-Z]+', collapsed))
+    if len(distinct_words) <= 2 and len(collapsed) < 30:
+        # High confidence this was a hallucination loop — discard as silence
+        return ""
+    return collapsed
+
+
+
 class SpeechToTextService:
     """Production STT service with audio validation, timeout, and monotonic latency measurement."""
 
@@ -29,7 +61,7 @@ class SpeechToTextService:
         audio_bytes: bytes,
         filename: str = "recording.wav",
         session: Optional[VoiceSession] = None,
-        timeout_seconds: float = 30.0
+        timeout_seconds: float = 90.0
     ) -> Dict[str, Any]:
         """
         Transcribes audio bytes into normalized text.
@@ -89,7 +121,8 @@ class SpeechToTextService:
             res = {"text": str(res)}
 
         raw_text = res.get("text") or res.get("transcript") or ""
-        clean_text = raw_text.strip()
+        # Bug Fix 2: collapse silence-hallucination loops before any further checks
+        clean_text = deduplicate_hallucination(raw_text.strip())
 
         if not clean_text:
             if session:

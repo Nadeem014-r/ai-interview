@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Navbar } from "@/components/Navbar";
+import { WorkspaceLayout } from "@/components/WorkspaceLayout";
 import { apiRequest } from "@/lib/api";
-import { Shield, Users, Building, FileCheck, Globe, Plus, CheckCircle2 } from "lucide-react";
+import { Shield, Globe, Plus, CheckCircle2 } from "lucide-react";
 
 export default function AdminDashboardPage() {
   const [stats, setStats] = useState<any>(null);
@@ -55,90 +55,90 @@ export default function AdminDashboardPage() {
   };
 
   return (
-    <div style={{ minHeight: "100vh" }}>
-      <Navbar />
+    <WorkspaceLayout sectionTitle="Admin Control" sectionSubtitle="University Placement Cell Administration">
+      <div style={{ marginBottom: "1.5rem" }}>
+        <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "#09090b", letterSpacing: "-0.02em", margin: 0 }}>
+          University Placement & Admin Control Panel
+        </h2>
+        <p style={{ color: "#71717a", fontSize: "0.85rem", marginTop: "0.2rem" }}>
+          Manage candidate cohorts and trigger company knowledge ingestion into the RAG vector store.
+        </p>
+      </div>
 
-      <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "2.5rem 1.5rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "2rem" }}>
-          <Shield size={28} color="var(--primary)" />
-          <h2>University Placement Cell & Admin Control Panel</h2>
+      {/* Stats Grid */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem", marginBottom: "1.75rem" }}>
+        <div className="saas-card" style={{ padding: "1.25rem" }}>
+          <span style={{ fontSize: "0.75rem", color: "#71717a", textTransform: "uppercase", fontWeight: 600 }}>Registered Candidates</span>
+          <h2 style={{ fontSize: "1.85rem", fontWeight: 800, color: "#09090b", marginTop: "0.25rem" }}>{stats?.total_candidates || 0}</h2>
         </div>
-
-        {/* Stats Grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1.25rem", marginBottom: "2.5rem" }}>
-          <div className="glass-card" style={{ padding: "1.25rem" }}>
-            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Registered Candidates</span>
-            <h2 style={{ fontSize: "2rem", color: "var(--primary)", marginTop: "0.4rem" }}>{stats?.total_candidates || 0}</h2>
-          </div>
-          <div className="glass-card" style={{ padding: "1.25rem" }}>
-            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Total Interviews</span>
-            <h2 style={{ fontSize: "2rem", color: "var(--accent-cyan)", marginTop: "0.4rem" }}>{stats?.total_interviews || 0}</h2>
-          </div>
-          <div className="glass-card" style={{ padding: "1.25rem" }}>
-            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Avg Candidate Score</span>
-            <h2 style={{ fontSize: "2rem", color: "var(--accent-emerald)", marginTop: "0.4rem" }}>{stats?.average_platform_score || 0}</h2>
-          </div>
+        <div className="saas-card" style={{ padding: "1.25rem" }}>
+          <span style={{ fontSize: "0.75rem", color: "#71717a", textTransform: "uppercase", fontWeight: 600 }}>Total Interviews</span>
+          <h2 style={{ fontSize: "1.85rem", fontWeight: 800, color: "#09090b", marginTop: "0.25rem" }}>{stats?.total_interviews || 0}</h2>
         </div>
+        <div className="saas-card" style={{ padding: "1.25rem" }}>
+          <span style={{ fontSize: "0.75rem", color: "#71717a", textTransform: "uppercase", fontWeight: 600 }}>Avg Candidate Score</span>
+          <h2 style={{ fontSize: "1.85rem", fontWeight: 800, color: "#059669", marginTop: "0.25rem" }}>{stats?.average_platform_score || 0}</h2>
+        </div>
+      </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem" }}>
-          {/* Research Ingestion Card */}
-          <div className="glass-card" style={{ padding: "1.75rem" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "1.25rem" }}>
-              <Globe size={20} color="var(--accent-cyan)" />
-              <h3>Company Research RAG Ingestor</h3>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "1.25rem" }}>
+        {/* Research Ingestion Card */}
+        <div className="saas-card" style={{ padding: "1.5rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", marginBottom: "1rem" }}>
+            <Globe size={18} color="#09090b" />
+            <h3 style={{ fontSize: "1rem", fontWeight: 600, color: "#09090b", margin: 0 }}>Company Research RAG Ingestor</h3>
+          </div>
+
+          {ingested && (
+            <div style={{ padding: "0.65rem 0.85rem", backgroundColor: "var(--accent-emerald-light)", border: "1px solid #a7f3d0", borderRadius: "8px", color: "var(--accent-emerald)", fontSize: "0.825rem", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+              <CheckCircle2 size={15} /> Job specification chunked & embedded into pgvector RAG store!
             </div>
+          )}
 
-            {ingested && (
-              <div style={{ padding: "0.75rem 1rem", background: "rgba(16, 185, 129, 0.15)", border: "1px solid rgba(16, 185, 129, 0.3)", borderRadius: "var(--radius-md)", color: "#6ee7b7", fontSize: "0.85rem", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <CheckCircle2 size={16} /> Job specification chunked & embedded into pgvector RAG store!
-              </div>
-            )}
+          <form onSubmit={handleIngestResearch} style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Company Name</label>
+              <input type="text" required value={companyName} onChange={(e) => setCompanyName(e.target.value)} className="form-input" placeholder="Google" />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Target Role Title</label>
+              <input type="text" required value={roleTitle} onChange={(e) => setRoleTitle(e.target.value)} className="form-input" placeholder="Software Engineer (Backend)" />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Official Career / JD URL</label>
+              <input type="url" value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} className="form-input" placeholder="https://careers.google.com/jobs/results/..." />
+            </div>
+            <button type="submit" className="btn btn-primary" style={{ marginTop: "0.35rem", fontSize: "0.825rem" }}>
+              <Plus size={14} /> <span>Trigger RAG Ingestion Pipeline</span>
+            </button>
+          </form>
+        </div>
 
-            <form onSubmit={handleIngestResearch} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-              <div>
-                <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Company Name</label>
-                <input type="text" required value={companyName} onChange={(e) => setCompanyName(e.target.value)} className="form-input" placeholder="Google" />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Target Role Title</label>
-                <input type="text" required value={roleTitle} onChange={(e) => setRoleTitle(e.target.value)} className="form-input" placeholder="Software Engineer (Backend)" />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>Official Career / JD URL</label>
-                <input type="url" value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} className="form-input" placeholder="https://careers.google.com/jobs/results/..." />
-              </div>
-              <button type="submit" className="btn btn-primary" style={{ marginTop: "0.5rem" }}>
-                <Plus size={16} /> Trigger RAG Ingestion Pipeline
-              </button>
-            </form>
-          </div>
-
-          {/* Candidate Table */}
-          <div className="glass-card" style={{ padding: "1.75rem" }}>
-            <h3 style={{ marginBottom: "1.25rem" }}>Registered Candidates</h3>
-            <div style={{ overflowY: "auto", maxHeight: "350px" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
-                <thead>
-                  <tr style={{ borderBottom: "1px solid var(--border-subtle)", color: "var(--text-muted)", textAlign: "left" }}>
-                    <th style={{ padding: "0.5rem" }}>ID</th>
-                    <th style={{ padding: "0.5rem" }}>Name</th>
-                    <th style={{ padding: "0.5rem" }}>Email</th>
+        {/* Candidate Table */}
+        <div className="saas-card" style={{ padding: "1.5rem" }}>
+          <h3 style={{ fontSize: "1rem", fontWeight: 600, color: "#09090b", marginBottom: "1rem" }}>Registered Candidates</h3>
+          <div style={{ overflowY: "auto", maxHeight: "330px" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.825rem" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #e4e4e7", color: "#71717a", textAlign: "left", backgroundColor: "#fafafa" }}>
+                  <th style={{ padding: "0.5rem 0.75rem", fontWeight: 500 }}>ID</th>
+                  <th style={{ padding: "0.5rem 0.75rem", fontWeight: 500 }}>Name</th>
+                  <th style={{ padding: "0.5rem 0.75rem", fontWeight: 500 }}>Email</th>
+                </tr>
+              </thead>
+              <tbody>
+                {candidates.map((c) => (
+                  <tr key={c.id} style={{ borderBottom: "1px solid #f4f4f5" }}>
+                    <td style={{ padding: "0.5rem 0.75rem", fontWeight: 600, color: "#09090b" }}>#{c.id}</td>
+                    <td style={{ padding: "0.5rem 0.75rem", fontWeight: 500, color: "#09090b" }}>{c.full_name}</td>
+                    <td style={{ padding: "0.5rem 0.75rem", color: "#71717a" }}>{c.email}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {candidates.map((c) => (
-                    <tr key={c.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-                      <td style={{ padding: "0.5rem" }}>#{c.id}</td>
-                      <td style={{ padding: "0.5rem", fontWeight: 600 }}>{c.full_name}</td>
-                      <td style={{ padding: "0.5rem", color: "var(--text-secondary)" }}>{c.email}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
-    </div>
+    </WorkspaceLayout>
   );
 }

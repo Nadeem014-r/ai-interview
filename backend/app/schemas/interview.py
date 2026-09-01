@@ -103,9 +103,12 @@ class CandidateAnswerSubmit(BaseModel):
 
 class AnswerTurnResponse(BaseModel):
     evaluation: Dict[str, Any]
-    next_question: Optional[QuestionOut]
+    next_question: Optional[QuestionOut] = None
     interview_state: InterviewStateOut
     is_completed: bool
+    closing_message: Optional[str] = None
+    termination_reason: Optional[str] = None
+
 
 class EvaluationOut(BaseModel):
     id: int

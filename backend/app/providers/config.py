@@ -33,9 +33,17 @@ class ProviderConfig:
     OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     STT_TIMEOUT_SECONDS: float = float(os.getenv("STT_TIMEOUT_SECONDS", "30.0"))
 
-    # Provider Selection
-    DEFAULT_TTS_PROVIDER: str = os.getenv("DEFAULT_TTS_PROVIDER", "elevenlabs").lower()
-    DEFAULT_STT_PROVIDER: str = os.getenv("DEFAULT_STT_PROVIDER", "mock").lower()
+    # Provider Selection (Defaulting to Kokoro 0.9.4 TTS and Whisper Small STT)
+    DEFAULT_TTS_PROVIDER: str = os.getenv("DEFAULT_TTS_PROVIDER", "kokoro").lower()
+    DEFAULT_STT_PROVIDER: str = os.getenv("DEFAULT_STT_PROVIDER", "whisper").lower()
+
+    # Kokoro TTS Configuration
+    KOKORO_LANG_CODE: str = os.getenv("KOKORO_LANG_CODE", "a")
+    KOKORO_REPO_ID: str = os.getenv("KOKORO_REPO_ID", "hexgrad/Kokoro-82M")
+
+    # Whisper STT Configuration
+    WHISPER_MODEL_ID: str = os.getenv("WHISPER_MODEL_ID", "openai/whisper-small")
+    WHISPER_DEVICE: str = os.getenv("WHISPER_DEVICE", "cpu")
 
     # Safety & Operational Bounds
     MAX_TTS_TEXT_CHARS: int = int(os.getenv("MAX_TTS_TEXT_CHARS", "4000"))
@@ -56,6 +64,12 @@ class ProviderConfig:
             ELEVENLABS_API_KEY=os.getenv("ELEVENLABS_API_KEY"),
             ELEVENLABS_VOICE_ID=os.getenv("ELEVENLABS_VOICE_ID", "hqBknhU0QebV576rq8S9"),
             ELEVENLABS_MODEL=os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5"),
+            DEFAULT_TTS_PROVIDER=os.getenv("DEFAULT_TTS_PROVIDER", "kokoro").lower(),
+            DEFAULT_STT_PROVIDER=os.getenv("DEFAULT_STT_PROVIDER", "whisper").lower(),
+            KOKORO_LANG_CODE=os.getenv("KOKORO_LANG_CODE", "a"),
+            KOKORO_REPO_ID=os.getenv("KOKORO_REPO_ID", "hexgrad/Kokoro-82M"),
+            WHISPER_MODEL_ID=os.getenv("WHISPER_MODEL_ID", "openai/whisper-small"),
+            WHISPER_DEVICE=os.getenv("WHISPER_DEVICE", "cpu"),
             VOICE_SILENCE_TIMEOUT_SEC=float(os.getenv("VOICE_SILENCE_TIMEOUT", "2.8")),
             VOICE_MIN_SPEECH_DURATION_SEC=float(os.getenv("VOICE_MIN_SPEECH_DURATION", "1.0")),
             VOICE_MAX_RESPONSE_DURATION_SEC=float(os.getenv("VOICE_MAX_RESPONSE_DURATION", "120.0")),

@@ -100,6 +100,31 @@ COMPANIES = [
                     "Behavioral",
                 ],
             },
+            {
+                "title": "Frontend Software Engineer",
+                "level": "Entry / L3",
+                "description": "Build high-performance web applications and interactive design systems.",
+                "required_skills": [
+                    "React",
+                    "TypeScript",
+                    "JavaScript",
+                    "Next.js",
+                    "HTML",
+                    "CSS",
+                ],
+                "key_topics": [
+                    "Frontend Architecture",
+                    "Web Performance",
+                    "React State Management",
+                    "DOM Optimization",
+                ],
+                "interview_categories": [
+                    "Technical",
+                    "UI Design",
+                    "Coding",
+                    "Behavioral",
+                ],
+            },
         ],
     },
     {

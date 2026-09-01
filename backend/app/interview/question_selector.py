@@ -243,11 +243,13 @@ PREVIOUSLY ASKED QUESTIONS (DO NOT DUPLICATE OR REPEAT):
 
 INSTRUCTIONS:
 1. Frame ONE clear, spoken question reflecting {company_profile.display_name}'s technical style and {role_profile.display_name}'s domain requirements.
-2. DO NOT use cold written-exam phrasing like "Question 3: Define..." or robotic templates.
-3. Focus on WHY, HOW, trade-offs, architecture, scalability, edge cases, and failure scenarios.
-4. Keep the question grounded in the target topic ({clean_topic}).
-5. If changing topic, connect naturally with projects or tools previously mentioned by the candidate when relevant.
-6. DO NOT claim proprietary company questions or fabricate candidate experience.
+2. Keep the question CONCISE, natural, and conversational when spoken aloud (1-2 sentences, under 40 words). Avoid huge paragraphs.
+3. DO NOT use cold written-exam phrasing like "Question 3: Define..." or robotic questionnaire templates.
+4. STRICT GROUNDING: Never tell the candidate "You implemented X" unless verified in resume or previously stated by candidate. Say "You mentioned X..." or "Your resume lists X...".
+5. Focus on WHY, HOW, trade-offs, architecture, scalability, edge cases, and failure scenarios.
+6. Keep the question grounded in the target topic ({clean_topic}).
+7. If changing topic, connect naturally with projects or tools previously mentioned by the candidate when relevant.
+8. DO NOT claim proprietary company questions or fabricate candidate experience.
 
 Return JSON:
 {{

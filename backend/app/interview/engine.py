@@ -4,13 +4,15 @@ Coordinates interview lifecycle, planning, evaluation ingestion, skill evolution
 follow-up intelligence, claim tracking, difficulty adaptation, and time-aware stop conditions.
 """
 
+import re
+import logging
 from datetime import datetime
 from typing import Dict, Any, Optional, Tuple, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Interview, InterviewState, Question, Answer, Role, Resume
+from app.db.models import Company, Interview, InterviewState, Question, Answer, Role, Resume
 from app.interview.timer import InterviewTimer
 from app.interview.state_machine import AdaptiveStateMachine
 from app.interview.question_selector import QuestionSelector, is_duplicate_question
@@ -239,7 +241,114 @@ class AdaptiveInterviewEngine:
                 if row[0] and row[0] not in asked_texts:
                     asked_texts.append(row[0])
 
-        # 4. Adaptive Difficulty Progression
+        # 4. Ingest Turn and Analyze Candidate Viability / Knowledge Floor
+        # Check if candidate is currently answering a recovery question
+        was_recovery_turn = (state.interview_stage == "recovery")
+        
+        # Determine if current answer is non-responsive or severely struggling
+        ans_lower = (last_answer_text or "").lower().strip()
+        is_idontknow_or_empty = bool(
+            not ans_lower
+            or ans_lower in ["i don't know", "i dont know", "no idea", "pass", "skip", "no clue"]
+            or (ans_lower.startswith("i don't know") and len(ans_lower) < 25)
+            or (ans_lower.startswith("i dont know") and len(ans_lower) < 25)
+        )
+        is_severely_struggling = (last_eval_score < 4.0 or is_idontknow_or_empty)
+
+        # Handle Recovery Turn Outcome
+        if was_recovery_turn:
+            # Candidate was given a recovery opportunity to explain something they know
+            has_meaningful_recovery = (
+                last_eval_score >= 4.0
+                or (not is_idontknow_or_empty and len(ans_lower) >= 15 and bool(re.findall(r'\b[a-zA-Z]{3,}\b', ans_lower)))
+            )
+
+            if has_meaningful_recovery:
+                # Recovery SUCCEEDED! Candidate demonstrated baseline familiarity with their chosen subject.
+                # Continue interview at an accessible foundational difficulty.
+                state.difficulty = "easy"
+                state.interview_stage = "core"
+            else:
+                # Recovery FAILED! Candidate was unable to demonstrate familiarity even with a topic of their own choosing.
+                # Conclude the interview early and politely without wasting candidate's time.
+                state.interview_stage = "early_conclusion"
+                state.current_question_id = None
+                interview.status = "completed"
+                interview.end_time = datetime.utcnow()
+                await self.db.commit()
+                return state, None, True
+
+        # Check Consecutive Foundational Failure Threshold (Knowledge Floor)
+        # Inspect recent turns to avoid terminating on a single mistake
+        recent_turns = memory.conversation_turns[-3:] if memory.conversation_turns else []
+        consecutive_struggling = 0
+        for t in reversed(recent_turns):
+            t_ans_lower = (t.candidate_answer or "").lower().strip()
+            t_is_idk = bool(
+                not t_ans_lower
+                or t_ans_lower in ["i don't know", "i dont know", "no idea", "pass", "skip", "no clue"]
+                or (t_ans_lower.startswith("i don't know") and len(t_ans_lower) < 25)
+                or (t_ans_lower.startswith("i dont know") and len(t_ans_lower) < 25)
+            )
+            if t.score < 4.0 or t_is_idk:
+                consecutive_struggling += 1
+            else:
+                break
+
+        # Trigger Recovery Question if candidate has 2 or more consecutive foundational failures
+        # (and is not already in recovery or wrapup)
+        should_offer_recovery = (
+            not was_recovery_turn
+            and state.interview_stage not in ["recovery", "early_conclusion", "wrapup"]
+            and state.questions_asked_count >= 2
+            and (consecutive_struggling >= 2 or (len(recent_turns) >= 2 and sum(t.score for t in recent_turns[-2:]) / 2.0 < 3.2))
+        )
+
+        if should_offer_recovery:
+            state.interview_stage = "recovery"
+            state.difficulty = "easy"
+            
+            # Generate supportive recovery question
+            company = None
+            role = None
+            if hasattr(self.db, "get") and callable(self.db.get):
+                if interview.company_id:
+                    try:
+                        company = await self.db.get(Company, interview.company_id)
+                    except Exception:
+                        company = None
+                if interview.role_id:
+                    try:
+                        role = await self.db.get(Role, interview.role_id)
+                    except Exception:
+                        role = None
+
+            from app.interview.persona import InterviewPersonaBuilder
+            recovery_q_data = await InterviewPersonaBuilder.generate_recovery_question(
+                company=company,
+                role=role
+            )
+            
+            recovery_q = Question(
+                company_id=interview.company_id,
+                role_id=interview.role_id,
+                topic=recovery_q_data.get("topic", "Practical Project & Skills Overview"),
+                difficulty="easy",
+                question_type="technical",
+                question_text=recovery_q_data.get("question_text", "I see. That's completely okay. Let's take a step back. Can you tell me about a technology, project, or concept that you have personally worked with and feel most comfortable explaining?"),
+                expected_concepts=recovery_q_data.get("expected_concepts", ["Demonstrated personal project", "Core technology familiarity"]),
+                follow_ups=recovery_q_data.get("follow_ups", ["What was your specific role and what technical challenges did you solve?"])
+            )
+            self.db.add(recovery_q)
+            await self.db.commit()
+            await self.db.refresh(recovery_q)
+            
+            state.current_question_id = recovery_q.id
+            await self.db.commit()
+            await self.db.refresh(state)
+            return state, recovery_q, False
+
+        # 5. Adaptive Difficulty Progression for continuing interview
         cur_diff = state.difficulty or "medium"
         if last_eval_score >= 8.0:
             adapted_diff = "hard" if cur_diff in ["medium", "hard"] else "medium"
@@ -366,3 +475,140 @@ class AdaptiveInterviewEngine:
         await self.db.commit()
         await self.db.refresh(state)
         return state, next_question, False
+
+    # -------------------------------------------------------------------------
+    # process_answer_turn_v2: Depth State Machine + Persona Controller overlay
+    # Opt-in via ENABLE_DEPTH_STATE_MACHINE=true env flag.
+    # Calls the original process_answer_turn() first, then enriches state
+    # with DepthStateMachine + QuestionDirective metadata.
+    # -------------------------------------------------------------------------
+
+    async def process_answer_turn_v2(
+        self,
+        interview: "Interview",
+        state: "InterviewState",
+        last_eval_score: float,
+        asked_question_ids: List[int],
+        last_eval_dict: Optional[Dict[str, Any]] = None,
+        last_answer_text: Optional[str] = None,
+        depth_snapshot_dict: Optional[Dict[str, Any]] = None,
+    ) -> Tuple["InterviewState", Optional["Question"], bool, Dict[str, Any]]:
+        """
+        Enhanced answer processing turn with DepthStateMachine overlay.
+
+        Returns the same (state, next_question, is_completed) as process_answer_turn,
+        plus a 4th element: depth_metadata dict for the calling layer to use.
+
+        depth_metadata = {
+            "current_depth": int (1-5),
+            "time_phase": str,
+            "depth_label": str,
+            "probe_type": str,
+            "directive": QuestionDirective,
+            "depth_snapshot": dict,  # for DB persistence
+            "system_prompt": str,     # persona-enriched system prompt for next turn
+        }
+
+        Falls back gracefully to the original process_answer_turn() if the
+        depth state machine modules fail to import (e.g., during testing).
+        """
+        # ── Run the original turn logic first (completely unchanged) ─────────
+        state, next_question, is_completed = await self.process_answer_turn(
+            interview=interview,
+            state=state,
+            last_eval_score=last_eval_score,
+            asked_question_ids=asked_question_ids,
+            last_eval_dict=last_eval_dict,
+            last_answer_text=last_answer_text,
+        )
+
+        # ── Depth State Machine overlay ───────────────────────────────────────
+        depth_metadata: Dict[str, Any] = {}
+        try:
+            from app.interview.depth_state_machine import DepthStateMachine, DepthStateSnapshot
+            from app.interview.persona_controller import InterviewerPersonaController
+
+            # Restore or initialize DepthStateMachine from snapshot
+            if depth_snapshot_dict:
+                snap = DepthStateSnapshot.from_dict(depth_snapshot_dict)
+            else:
+                snap = DepthStateSnapshot()
+            dsm = DepthStateMachine(snapshot=snap)
+
+            # Update time phase
+            elapsed = (
+                (interview.duration_minutes * 60)
+                - max(0, state.time_remaining_seconds or 0)
+            )
+            total = max(1, interview.duration_minutes) * 60
+            dsm.update_time_phase(elapsed_seconds=elapsed, total_duration_seconds=total)
+
+            # Update depth from evaluation score
+            dsm.update_depth(answer_score=last_eval_score)
+
+            # Get question directive
+            directive = dsm.get_directive(
+                topic=state.current_topic or "Technical",
+                last_answer_text=last_answer_text,
+                last_eval_dict=last_eval_dict,
+            )
+
+            # Build persona-enriched system prompt for the next question turn
+            role_title = "Software Engineer"
+            company_name = "the company"
+            candidate_name = "the candidate"
+            try:
+                from sqlalchemy import select
+                from app.db.models import Role, Company
+                if interview.role_id:
+                    res_role = await self.db.execute(
+                        select(Role).where(Role.id == interview.role_id)
+                    )
+                    role_obj = res_role.scalars().first()
+                    if role_obj:
+                        role_title = role_obj.title or role_title
+                if interview.company_id:
+                    res_co = await self.db.execute(
+                        select(Company).where(Company.id == interview.company_id)
+                    )
+                    co_obj = res_co.scalars().first()
+                    if co_obj:
+                        company_name = co_obj.name or company_name
+            except Exception:
+                pass
+
+            system_prompt = InterviewerPersonaController.build_system_prompt(
+                role_title=role_title,
+                company_name=company_name,
+                candidate_name=candidate_name,
+                directive=directive,
+                interview_type=interview.interview_type or "technical",
+            )
+
+            depth_metadata = {
+                "current_depth": dsm.current_depth,
+                "time_phase": dsm.current_phase.value,
+                "depth_label": directive.depth_label,
+                "probe_type": directive.probe_type,
+                "directive": directive,
+                "depth_snapshot": dsm.get_snapshot().to_dict(),
+                "system_prompt": system_prompt,
+                "average_score": dsm.average_score,
+            }
+
+        except Exception as exc:
+            logging.getLogger("ai_interviewer.engine").warning(
+                f"DepthStateMachine overlay failed (non-fatal): {exc}"
+            )
+            depth_metadata = {
+                "current_depth": 1,
+                "time_phase": "core",
+                "depth_label": "Practical",
+                "probe_type": "practical_implementation",
+                "directive": None,
+                "depth_snapshot": {},
+                "system_prompt": "",
+                "average_score": last_eval_score,
+            }
+
+        return state, next_question, is_completed, depth_metadata

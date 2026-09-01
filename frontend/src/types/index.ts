@@ -8,13 +8,14 @@ export interface User {
 }
 
 export interface CandidateProfile {
-  id: number;
-  user_id: number;
+  id?: number;
+  user_id?: number;
   full_name?: string;
   email?: string;
   headline?: string;
   target_role?: string;
-  experience_level: string;
+  experience_level?: string;
+  experience_years?: number;
   bio?: string;
   phone?: string;
   university?: string;
@@ -64,6 +65,17 @@ export interface Question {
   follow_ups: string[];
 }
 
+export interface QuestionTurn {
+  id?: number;
+  turn_number?: number;
+  question_text: string;
+  difficulty?: string;
+  focus_areas?: string[];
+  candidate_response?: string;
+  score_awarded?: number;
+  evaluation_feedback?: string;
+}
+
 export interface InterviewState {
   current_topic?: string;
   difficulty: string;
@@ -106,6 +118,8 @@ export interface InterviewSession {
   mode: string;
   interview_type?: string;
   duration_minutes: number;
+  remaining_seconds?: number;
+  total_questions?: number;
   target_level: string;
   status: string;
   start_time?: string;
@@ -134,6 +148,8 @@ export interface AnswerTurnResponse {
   next_question?: Question;
   interview_state: InterviewState;
   is_completed: boolean;
+  closing_message?: string;
+  termination_reason?: string;
 }
 
 export interface FinalReport {
@@ -167,6 +183,10 @@ export interface JobMatchResult {
   breakdown: JobMatchBreakdown;
   matched_skills: string[];
   missing_skills: string[];
+  what_you_have?: string[];
+  what_you_are_missing?: string[];
+  is_eligible?: boolean;
+  eligibility_reason?: string;
   strengths: string[];
   weaknesses: string[];
   recommendations: string[];
@@ -195,4 +215,3 @@ export interface ResumeItem {
   created_at: string;
   resume_profile?: ResumeProfile;
 }
-

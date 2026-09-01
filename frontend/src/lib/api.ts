@@ -29,7 +29,17 @@ export async function apiRequest<T>(
       }
     }
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || "An API request error occurred.");
+    let errorMessage = "An API request error occurred.";
+    if (typeof errorData.detail === "string") {
+      errorMessage = errorData.detail;
+    } else if (Array.isArray(errorData.detail)) {
+      errorMessage = errorData.detail.map((e: any) => e.msg || e.message || JSON.stringify(e)).join(", ");
+    } else if (typeof errorData.detail === "object" && errorData.detail !== null) {
+      errorMessage = errorData.detail.message || errorData.detail.msg || JSON.stringify(errorData.detail);
+    } else if (errorData.message) {
+      errorMessage = errorData.message;
+    }
+    throw new Error(errorMessage);
   }
 
   return response.json();

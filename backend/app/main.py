@@ -1,3 +1,6 @@
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -17,6 +20,14 @@ from app.api.v1.admin import router as admin_router
 from app.api.v1.coding import router as coding_router
 from app.api.v1.jobs import router as jobs_router
 from app.api.v1.video import router as video_router
+
+# ── New voice live router (additive — non-breaking if import fails) ──────────
+try:
+    from app.api.v1.voice_live import router as voice_live_router
+    _voice_live_available = True
+except ImportError as _e:
+    _voice_live_available = False
+    logger.warning(f"voice_live router not available (non-fatal): {_e}")
 
 setup_logging()
 logger = logging.getLogger("ai_interviewer.main")
@@ -43,6 +54,42 @@ async def on_startup():
     logger.info("Initializing database tables...")
     await init_db()
     logger.info("Database initialized successfully.")
+
+    # Background warm-up of local AI models (Kokoro TTS & Whisper STT)
+    import asyncio
+    async def _prewarm_models():
+        try:
+            logger.info("Pre-warming Kokoro 0.9.4 TTS and Whisper Small STT models...")
+            from app.providers.kokoro_tts import KokoroTTSProvider
+            from app.providers.whisper_stt import WhisperSmallSTTProvider
+            await asyncio.to_thread(KokoroTTSProvider._get_pipeline)
+            await asyncio.to_thread(WhisperSmallSTTProvider._get_pipeline)
+            logger.info("Neural voice models pre-warmed successfully.")
+        except Exception as e:
+            logger.warning(f"Voice model pre-warming deferred: {e}")
+
+    asyncio.create_task(_prewarm_models())
+
+    # ── Background JD scraper (additive — non-blocking) ──────────────────────
+    try:
+        from app.matching.background_scraper import start_background_scraper
+        from app.core.database import AsyncSessionLocal
+        start_background_scraper(
+            db_factory=AsyncSessionLocal,
+            interval_hours=24.0,
+        )
+        logger.info("Background JD scraper scheduled (24h interval).")
+    except Exception as _bg_exc:
+        logger.warning(f"Background JD scraper startup failed (non-fatal): {_bg_exc}")
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    try:
+        from app.matching.background_scraper import stop_background_scraper
+        stop_background_scraper()
+    except Exception:
+        pass
 
 @app.get("/health", tags=["Health Check"])
 async def health_check():
@@ -85,6 +132,11 @@ api_v1.include_router(voice_router)
 api_v1.include_router(admin_router)
 api_v1.include_router(coding_router)
 api_v1.include_router(video_router)
+
+# ── New live voice WebSocket router (additive) ────────────────────────────────
+if _voice_live_available:
+    app.include_router(voice_live_router)  # WebSocket routes registered on app directly
+    logger.info("Live voice WebSocket routes registered: /ws/voice/live, /ws/voice/hybrid")
 
 app.mount(settings.API_V1_STR, api_v1)
 

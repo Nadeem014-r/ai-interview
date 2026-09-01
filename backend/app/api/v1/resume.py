@@ -110,10 +110,39 @@ async def upload_resume(
         await db.commit()
         await db.refresh(new_resume)
 
+        # ── Pass 2: Taxonomy Enrichment (additive, non-blocking) ──────────────
+        # Runs after commit so a taxonomy failure never blocks the upload flow.
+        try:
+            import logging as _logging
+            from app.resume.taxonomy_parser import TaxonomyParser
+            _tax_logger = _logging.getLogger("ai_interviewer.resume_api")
+            taxonomy_result = await TaxonomyParser.enrich_profile(
+                parsed_profile=parsed_json,
+                raw_text_snippet=raw_text[:1000],
+            )
+            # Store taxonomy inside model_inferred.taxonomy (JSON column, backward-compatible)
+            existing_inferred = new_profile.model_inferred or {}
+            existing_inferred["taxonomy"] = taxonomy_result.taxonomy.model_dump()
+            existing_inferred["evaluation_skills"] = taxonomy_result.evaluation_skills
+            existing_inferred["noise_filtered"] = taxonomy_result.noise_filtered
+            new_profile.model_inferred = existing_inferred
+            await db.commit()
+            _tax_logger.info(
+                f"Taxonomy enrichment complete for resume {new_resume.id}: "
+                f"{len(taxonomy_result.evaluation_skills)} evaluation skills, "
+                f"{len(taxonomy_result.noise_filtered)} noise items filtered."
+            )
+        except Exception as _tax_exc:
+            import logging as _logging
+            _logging.getLogger("ai_interviewer.resume_api").warning(
+                f"Taxonomy enrichment failed (non-fatal, upload still succeeded): {_tax_exc}"
+            )
+
         # Re-fetch full resume with resume_profile relationship loaded
         stmt = select(Resume).options(selectinload(Resume.resume_profile)).where(Resume.id == new_resume.id)
         res = await db.execute(stmt)
         return res.scalars().first()
+
 
     except HTTPException:
         await db.rollback()

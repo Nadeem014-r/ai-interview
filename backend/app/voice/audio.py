@@ -140,9 +140,8 @@ class AudioValidator:
 
         # Conformance between file extension and detected binary format
         effective_format = detected_format
-        if ext and ext in SUPPORTED_FORMATS:
-            if ext != detected_format and not (ext in ("mp4", "m4a") and detected_format == "m4a"):
-                raise UnsupportedAudioFormatError(f"Extension '{ext}' does not match detected format '{detected_format}'.")
+        if effective_format not in SUPPORTED_FORMATS:
+            raise UnsupportedAudioFormatError(f"Detected format '{effective_format}' is not supported.")
 
         # 5. MIME Type verification if provided
         effective_mime = mime_type or f"audio/{effective_format}"

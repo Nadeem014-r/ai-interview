@@ -15,6 +15,8 @@ VALID_STAGES = [
     "adaptive_probe",
     "resume_discussion",
     "behavioral",
+    "recovery",
+    "early_conclusion",
     "wrapup"
 ]
 

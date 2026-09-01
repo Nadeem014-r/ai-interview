@@ -81,3 +81,9 @@ class ProviderFallbackError(ProviderError):
     """Both primary and secondary fallback providers failed."""
     def __init__(self, message: str, provider: str = "unknown", raw_error: Optional[Any] = None):
         super().__init__(message, provider=provider, code="PROVIDER_FALLBACK_ERROR", raw_error=raw_error)
+
+
+# Aliases for provider-specific errors
+TTSProviderError = ProviderResponseError
+STTProviderError = ProviderResponseError
+

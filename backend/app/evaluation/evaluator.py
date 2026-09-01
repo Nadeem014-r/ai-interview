@@ -114,17 +114,23 @@ class AnswerEvaluator:
             question_text=question_text
         )
 
-        is_evasive = resp_state in ["EMPTY", "EXPLICIT_UNKNOWN", "GIBBERISH"]
+        is_evasive = resp_state in ["EMPTY", "EXPLICIT_UNKNOWN", "GIBBERISH", "MINIMAL_NON_SUBSTANTIVE"]
         is_off_topic = resp_state == "OFF_TOPIC"
 
-        # Early return for obvious non-responsive inputs (empty, explicit unknown, gibberish)
-        if resp_state in ["EMPTY", "EXPLICIT_UNKNOWN", "GIBBERISH"]:
+        # Early return for non-responsive / minimal inputs (empty, explicit unknown, gibberish, 1-word non-answers)
+        if resp_state in ["EMPTY", "EXPLICIT_UNKNOWN", "GIBBERISH", "MINIMAL_NON_SUBSTANTIVE"]:
             if resp_state == "GIBBERISH":
                 fb = f"The response does not address the question. Please provide a clear explanation of {topic}."
+                evidence = [f"Gibberish/unstructured input provided for {topic}."]
             elif resp_state == "EXPLICIT_UNKNOWN":
                 fb = f"The candidate did not demonstrate knowledge of {topic}. The next question will assess underlying fundamentals."
+                evidence = [f"Candidate indicated lack of knowledge on {topic}."]
+            elif resp_state == "MINIMAL_NON_SUBSTANTIVE":
+                fb = f"The response '{safe_answer}' does not provide sufficient explanation or technical reasoning for {topic}."
+                evidence = [f"Single-word non-explanatory answer: '{safe_answer}'."]
             else:
                 fb = f"No response was provided for {topic}."
+                evidence = ["No response provided."]
 
             overall = DeterministicScorer.calculate_question_weighted_score(
                 correctness=0.0,
@@ -151,9 +157,9 @@ class AnswerEvaluator:
                 "demonstrated_concepts": [],
                 "missing_concepts": expected_concepts or [f"Core mechanics of {topic}"],
                 "misconceptions": [],
-                "evidence": ["No relevant evidence provided in response."],
+                "evidence": evidence,
                 "recommended_action": "recover",
-                "follow_up_reason": "Candidate provided non-responsive input; pivot to fundamentals.",
+                "follow_up_reason": "Candidate provided non-responsive or minimal input; pivot to fundamentals.",
                 "feedback_text": fb,
                 "confidence_score": 1.0,
                 "human_review_required": False,
@@ -353,8 +359,8 @@ Return strict JSON:
         word_count = len(words)
         lower_ans = safe_answer.lower()
 
-        # Case 1: Evasive / I don't know / Empty / Gibberish
-        if resp_state in ["EMPTY", "EXPLICIT_UNKNOWN", "GIBBERISH"] or is_evasive or word_count == 0:
+        # Case 1: Evasive / I don't know / Empty / Gibberish / Minimal
+        if resp_state in ["EMPTY", "EXPLICIT_UNKNOWN", "GIBBERISH", "MINIMAL_NON_SUBSTANTIVE"] or is_evasive or word_count == 0:
             c_score = 0.0
             rel_score = 0.0
             reas_score = 0.0
@@ -366,6 +372,9 @@ Return strict JSON:
             elif resp_state == "EXPLICIT_UNKNOWN":
                 feedback = f"The candidate did not demonstrate knowledge of {topic}. The next question will assess underlying fundamentals."
                 evidence = ["Candidate stated they do not know the answer."]
+            elif resp_state == "MINIMAL_NON_SUBSTANTIVE":
+                feedback = f"The response '{safe_answer}' does not provide sufficient explanation or technical reasoning for {topic}."
+                evidence = [f"Single-word non-explanatory answer: '{safe_answer}'."]
             else:
                 feedback = f"No response provided for {topic}."
                 evidence = ["Empty response."]

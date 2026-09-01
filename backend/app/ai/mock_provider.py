@@ -63,22 +63,40 @@ class MockLLMProvider(LLMProvider):
 
         # 1. Report generation mock fallback
         if "assessment report" in prompt_lower or "topic breakdown scores:" in prompt_lower or "executive candidate" in prompt_lower or "interview overall score:" in prompt_lower:
-            data = {
-                "strengths": [
-                    "Demonstrates clear foundational technical understanding",
-                    "Structured communication and reasoning style"
-                ],
-                "weaknesses": [
-                    "Could deepen knowledge of edge-case failure modes and scale trade-offs",
-                    "Deep architectural mechanics need further exploration"
-                ],
-                "difficult_topics": ["Distributed Systems", "Write Overhead Trade-offs"],
-                "recommendations": [
-                    "Practice explaining underlying data structures and complexity trade-offs",
-                    "Review production failure scenarios and disaster recovery strategies"
-                ],
-                "executive_summary": "The candidate demonstrated solid fundamental skills across core topics. With targeted practice on architectural trade-offs and edge-case handling, they will be well-prepared for technical viva and placement rounds."
-            }
+            score_match = re.search(r"overall score:\s*([0-9.]+)", prompt_lower)
+            score_val = float(score_match.group(1)) if score_match else 50.0
+
+            if score_val < 40.0:
+                data = {
+                    "strengths": ["Insufficient evidence to identify demonstrated strengths."],
+                    "weaknesses": [
+                        "Limited demonstrated understanding of foundational concepts.",
+                        "Responses were too brief to establish technical knowledge or reasoning."
+                    ],
+                    "difficult_topics": ["Foundational Computer Science Concepts"],
+                    "recommendations": [
+                        "Review core CS fundamentals and practical implementations.",
+                        "Practice explaining technical concepts and personal projects thoroughly in your own words."
+                    ],
+                    "executive_summary": f"The interview concluded with an overall score of {score_val}/100. The candidate provided brief or non-responsive answers and was unable to demonstrate sufficient foundational knowledge across the assessed competencies."
+                }
+            else:
+                data = {
+                    "strengths": [
+                        "Demonstrates clear foundational technical understanding",
+                        "Structured communication and reasoning style"
+                    ],
+                    "weaknesses": [
+                        "Could deepen knowledge of edge-case failure modes and scale trade-offs",
+                        "Deep architectural mechanics need further exploration"
+                    ],
+                    "difficult_topics": ["Distributed Systems", "Write Overhead Trade-offs"],
+                    "recommendations": [
+                        "Practice explaining underlying data structures and complexity trade-offs",
+                        "Review production failure scenarios and disaster recovery strategies"
+                    ],
+                    "executive_summary": f"The candidate achieved an overall score of {score_val}/100 across assessed competencies. With targeted practice on architectural trade-offs, they will be well-prepared for placement rounds."
+                }
 
         # 2. Answer Evaluation Mock
         elif (
@@ -409,8 +427,9 @@ class MockLLMProvider(LLMProvider):
             elif "machine learning" in prompt_lower or "ml" in prompt_lower:
                 role_name = "Machine Learning Engineer"
 
+            greeting = "Hi, welcome"
             data = {
-                "question_text": f"Welcome to your interview for the {role_name} role at {comp_name}! To start off, could you introduce yourself, summarize your background, and share what drew you to apply to {comp_name}?",
+                "question_text": f"{greeting} to the interview for the {role_name} role at {comp_name}! To start off, could you introduce yourself, summarize your background, and share what drew you to apply to {comp_name}?",
                 "expected_concepts": ["Clear self-introduction", "Background summary", f"Interest in {comp_name}"],
                 "follow_ups": [f"What specific aspect of {comp_name}'s engineering challenges excites you most?"]
             }
@@ -553,7 +572,34 @@ class MockLLMProvider(LLMProvider):
                     resume_text = parts.split("Return JSON", 1)[0]
                 else:
                     resume_text = parts
-            data = ResumeParser.deterministic_rule_parse(resume_text.strip())
+            data = ResumeParser.deterministic_rule_parse(resume_text)
+        # 8. Executive assessment report mock fallback
+        elif "assessment report" in prompt_lower or "interview assessment report" in prompt_lower or "interview overall score:" in prompt_lower:
+            score_match = re.search(r"overall score:\s*([0-9.]+)", prompt_lower)
+            score_val = float(score_match.group(1)) if score_match else 50.0
+
+            if score_val < 40.0:
+                data = {
+                    "strengths": ["Insufficient evidence to identify demonstrated strengths."],
+                    "weaknesses": [
+                        "Limited demonstrated understanding of foundational concepts.",
+                        "Responses were too brief to establish technical knowledge or reasoning."
+                    ],
+                    "difficult_topics": ["Foundational Computer Science Concepts"],
+                    "recommendations": [
+                        "Review core CS fundamentals and practical implementations.",
+                        "Practice explaining technical concepts and personal projects thoroughly in your own words."
+                    ],
+                    "executive_summary": f"The candidate achieved an overall score of {score_val}/100. Responses were insufficient to establish technical competence across assessed topics."
+                }
+            else:
+                data = {
+                    "strengths": ["Demonstrated understanding of core software engineering fundamentals."],
+                    "weaknesses": ["Need deeper exploration of architectural trade-offs under high load."],
+                    "difficult_topics": ["System Design"],
+                    "recommendations": ["Review advanced scaling patterns and distributed system failure modes."],
+                    "executive_summary": f"The candidate achieved an overall score of {score_val}/100 with demonstrated competence in core topics."
+                }
 
         else:
             data = {"result": "mock_json_response", "status": "success"}
@@ -601,7 +647,35 @@ class MockSTTProvider(STTProvider):
 
 
 class MockTTSProvider(TTSProvider):
-    """Offline text-to-speech mock provider."""
+    """Offline text-to-speech mock provider generating valid audible PCM WAV audio."""
 
     async def synthesize_speech(self, text: str, voice_id: str = "default") -> bytes:
-        return b'RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00'
+        # Generate a valid, audible 0.5s 440Hz sine wave PCM WAV audio byte sequence
+        import math
+        import struct
+        sample_rate = 16000
+        duration_s = 0.5
+        num_samples = int(sample_rate * duration_s)
+        frequency = 440.0  # Standard A4 tone
+        
+        pcm_data = bytearray()
+        for i in range(num_samples):
+            # Generate soft sine wave sample (16-bit signed integer)
+            sample_val = int(12000.0 * math.sin(2.0 * math.pi * frequency * (i / sample_rate)))
+            pcm_data.extend(struct.pack('<h', sample_val))
+            
+        data_size = len(pcm_data)
+        header = bytearray(b'RIFF')
+        header.extend(struct.pack('<I', 36 + data_size))
+        header.extend(b'WAVEfmt ')
+        header.extend(struct.pack('<I', 16))          # Subchunk1Size for PCM
+        header.extend(struct.pack('<H', 1))           # AudioFormat 1 = PCM
+        header.extend(struct.pack('<H', 1))           # NumChannels 1 = Mono
+        header.extend(struct.pack('<I', sample_rate)) # SampleRate
+        header.extend(struct.pack('<I', sample_rate * 2)) # ByteRate
+        header.extend(struct.pack('<H', 2))           # BlockAlign
+        header.extend(struct.pack('<H', 16))          # BitsPerSample
+        header.extend(b'data')
+        header.extend(struct.pack('<I', data_size))
+        
+        return bytes(header + pcm_data)

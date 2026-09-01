@@ -5,7 +5,7 @@ handling, rate limit failover, and offline safety.
 """
 
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from app.core.config import settings
 from app.ai.base import LLMProvider, EmbeddingProvider
 from app.ai.exceptions import (
@@ -171,3 +171,82 @@ class RoutedEmbeddingProvider(EmbeddingProvider):
                 raise AIFallbackExhaustedError(
                     f"Both primary ({primary_err}) and fallback ({fallback_err}) batch embeddings failed."
                 ) from fallback_err
+
+
+class RoutedTTSProvider:
+    """TTS Provider wrapper that handles primary provider routing and automatic fallback."""
+
+    def __init__(
+        self,
+        primary_provider: Any,
+        fallback_provider: Optional[Any] = None,
+        enable_fallback: bool = True
+    ):
+        self.primary = primary_provider
+        self.fallback = fallback_provider
+        self.enable_fallback = enable_fallback
+        self.last_provider_used: str = getattr(primary_provider, "provider_name", type(primary_provider).__name__)
+        self.last_fallback_reason: Optional[str] = None
+
+    async def synthesize_speech(self, text: str, voice_id: str = "default") -> bytes:
+        try:
+            res = await self.primary.synthesize_speech(text, voice_id=voice_id)
+            self.last_provider_used = "elevenlabs" if "elevenlabs" in type(self.primary).__name__.lower() else "primary"
+            self.last_fallback_reason = None
+            return res
+        except Exception as primary_err:
+            if not self.enable_fallback or self.fallback is None:
+                raise primary_err
+
+            self.last_fallback_reason = str(primary_err)
+            self.last_provider_used = "mock" if "mock" in type(self.fallback).__name__.lower() else "fallback"
+            logger.warning(
+                f"[AI_PROVIDER_FAILOVER] Primary TTS provider failed ({primary_err}). Activating fallback TTS provider: '{self.last_provider_used}'.",
+                exc_info=False
+            )
+            try:
+                return await self.fallback.synthesize_speech(text, voice_id=voice_id)
+            except Exception as fallback_err:
+                logger.error(f"Fallback TTS provider also failed: {fallback_err}", exc_info=True)
+                raise AIFallbackExhaustedError(
+                    f"Both primary TTS ({primary_err}) and fallback TTS ({fallback_err}) failed."
+                ) from fallback_err
+
+    async def synthesize_speech_with_metadata(
+        self,
+        text: str,
+        voice_id: str = "default"
+    ) -> Tuple[bytes, Dict[str, Any]]:
+        if hasattr(self.primary, "synthesize_speech_with_metadata"):
+            try:
+                return await self.primary.synthesize_speech_with_metadata(text, voice_id=voice_id)
+            except Exception as primary_err:
+                if not self.enable_fallback or self.fallback is None:
+                    raise primary_err
+                logger.warning(f"Primary TTS synthesize_with_metadata failed ({primary_err}). Falling back...", exc_info=False)
+                audio_bytes = await self.fallback.synthesize_speech(text, voice_id=voice_id)
+                meta = {
+                    "provider": "mock",
+                    "voice_id": voice_id,
+                    "audio_bytes_length": len(audio_bytes),
+                    "characters": len(text),
+                    "latency_ms": 0.0,
+                    "success": True,
+                    "fallback_used": True,
+                    "fallback_activated": True
+                }
+                return audio_bytes, meta
+        else:
+            audio_bytes = await self.synthesize_speech(text, voice_id=voice_id)
+            meta = {
+                "provider": self.last_provider_used,
+                "voice_id": voice_id,
+                "audio_bytes_length": len(audio_bytes),
+                "characters": len(text),
+                "latency_ms": 0.0,
+                "success": True,
+                "fallback_used": (self.last_provider_used == "mock")
+            }
+            return audio_bytes, meta
+
+

@@ -473,3 +473,51 @@ async def test_backward_compatibility_signature():
     assert isinstance(audio_out, bytes)
     assert len(audio_out) > 0
 
+
+@pytest.mark.asyncio
+async def test_routed_tts_provider_failover():
+    """Verify RoutedTTSProvider seamlessly fails over to mock provider when primary fails."""
+    from app.ai.router import RoutedTTSProvider
+    from app.ai.mock_provider import MockTTSProvider
+    from app.ai.exceptions import AIAuthenticationError
+
+    failing_primary = MagicMock()
+    failing_primary.synthesize_speech = AsyncMock(side_effect=AIAuthenticationError("Quota exhausted"))
+    failing_primary.synthesize_speech_with_metadata = AsyncMock(side_effect=AIAuthenticationError("Quota exhausted"))
+
+    fallback = MockTTSProvider()
+    routed = RoutedTTSProvider(primary_provider=failing_primary, fallback_provider=fallback, enable_fallback=True)
+
+    audio_bytes = await routed.synthesize_speech("Hello candidate, welcome to the interview.")
+    assert isinstance(audio_bytes, bytes)
+    assert len(audio_bytes) > 0
+    assert audio_bytes.startswith(b"RIFF")
+
+    audio_bytes_meta, meta = await routed.synthesize_speech_with_metadata("Welcome to the session.")
+    assert isinstance(audio_bytes_meta, bytes)
+    assert meta["fallback_used"] is True
+    assert meta["provider"] == "mock"
+    assert meta["success"] is True
+
+
+
+@pytest.mark.asyncio
+async def test_early_conclusion_statement_and_recovery():
+    """Verify InterviewPersonaBuilder formats polite conclusion statement."""
+    from app.interview.persona import InterviewPersonaBuilder
+    from app.db.models import Company, Role
+
+    company = Company(id=1, name="Google", slug="google")
+    role = Role(id=1, title="Staff Software Engineer", company_id=1)
+
+    conclusion = InterviewPersonaBuilder.get_early_conclusion_statement(company=company, candidate_name="Alex")
+    assert "Alex" in conclusion
+    assert "Google" in conclusion
+    assert "time" in conclusion.lower()
+
+    recovery_q = await InterviewPersonaBuilder.generate_recovery_question(company=company, role=role, candidate_name="Alex")
+    assert "question_text" in recovery_q
+    assert recovery_q["difficulty"] == "easy"
+
+
+

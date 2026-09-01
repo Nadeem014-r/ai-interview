@@ -248,15 +248,17 @@ class FollowUpEngine:
             return candidates[0]
 
         # 4. Vague / Missing Concepts Probe
+        # Fix 1: Replaced "You mentioned {topic}" and "Regarding your point on {topic}"
+        # with direct topic-grounded probes that never presuppose candidate speech.
         elif reason_category in ["vague_answer", "clarify_concept", "probe_missing"]:
             candidates = [
                 {
-                    "question_text": f"You mentioned {topic}. How does that mechanism work under the hood, and what trade-offs did you consider?",
+                    "question_text": f"Let's dig into {topic}. Can you walk me through how that mechanism actually works under the hood, and what trade-offs come with it?",
                     "expected_concepts": [f"{topic} mechanics", "Implementation details", "Operational trade-offs"],
                     "follow_ups": ["How would you measure this in production?"]
                 },
                 {
-                    "question_text": f"Regarding your point on {topic}, how would you implement this in code and what constraints would you monitor?",
+                    "question_text": f"When implementing {topic} in a real system, what concrete constraints or resource considerations would you monitor?",
                     "expected_concepts": ["Concrete implementation", "Resource constraints", "Metrics/Observability"],
                     "follow_ups": ["What failure modes could occur?"]
                 }
@@ -330,11 +332,41 @@ class FollowUpEngine:
             return candidates[0]
 
         # Default fallback probe
+        # Fix 1: No attribution prefix — reference topic directly.
         return {
             "question_text": f"Could you elaborate on the practical considerations, failure modes, and trade-offs when implementing {topic} in production?",
             "expected_concepts": ["Production readiness", "Reliability", "Edge case handling"],
             "follow_ups": ["How would you monitor this in production?"]
         }
+
+
+# ---------------------------------------------------------------------------
+# Fix 2 – Deduplication guard for canned recovery phrases
+# ---------------------------------------------------------------------------
+_CANNED_RECOVERY_PHRASES = [
+    "i see. that's completely okay",
+    "let's take a step back. can you tell me about a technology",
+    "that's completely okay. let's take a step back",
+    "let\'s take a step back",
+]
+
+
+def _is_canned_recovery_text(text: str, asked: list) -> bool:
+    """
+    Returns True if `text` is effectively a repeat of the canned recovery phrasing
+    OR matches any already-asked question, so the engine will generate a fresh probe.
+    """
+    if not text:
+        return True
+    lower = text.lower()
+    for phrase in _CANNED_RECOVERY_PHRASES:
+        if phrase in lower:
+            # Also block if an already-asked question contains the same canned phrasing
+            for asked_q in asked:
+                if phrase in asked_q.lower():
+                    return True
+    return False
+
 
     @staticmethod
     async def generate_adaptive_follow_up(
@@ -378,6 +410,13 @@ class FollowUpEngine:
         prompt = f"""
 You are an expert senior engineering interviewer conducting a realistic viva interview for a {target_level} software engineer.
 
+STRICT GROUNDING RULE (never violate):
+Never say \"You mentioned X\" or \"Regarding your point on X\" unless the candidate's answer below
+explicitly uses that exact term X. When probing a new concept the candidate has not named, ask
+directly: \"Let's look at [concept]. [question]\".  If the candidate gave a brief or generic answer
+(e.g. \"i have done a project on AI ML\", \"ok\", \"no trade off\"), acknowledge what they said and
+immediately ask for concrete specifics (e.g. \"Which specific model did you implement?\").
+
 STRUCTURED INTERVIEW MEMORY & CONVERSATION CONTEXT:
 {memory_context or "Beginning of topic exploration."}
 
@@ -406,9 +445,9 @@ PREVIOUSLY ASKED QUESTIONS (DO NOT REPEAT):
 
 INSTRUCTIONS:
 1. Formulate a single concise, natural, spoken interviewer question that directly builds upon what the candidate said.
-2. Use conversational transitions when referencing previous statements (e.g., "You mentioned...", "Earlier you said...", "Going back to the project you described...").
-3. DO NOT use robotic phrasing like "Based on memory item #3" or "According to your previous score".
-4. DO NOT use generic conversational filler like "Great answer!", "Excellent!", or "That's very interesting!".
+2. Use conversational transitions ONLY when grounded in the candidate's actual words shown above. Never invent context.
+3. DO NOT use robotic phrasing like \"Based on memory item #3\" or \"According to your previous score\".
+4. DO NOT use generic conversational filler like \"Great answer!\", \"Excellent!\", or \"That's very interesting!\".
 5. If the candidate made a specific technical assertion (e.g. tools mentioned like Redis, FastAPI, PostgreSQL, JWT, Kafka), probe into implementation mechanics, trade-offs, or edge cases.
 6. If the candidate was strong, test scalability, failure modes, and trade-offs.
 7. If the candidate was vague or had a misconception, ask a targeted question to test if they can reason through it.
