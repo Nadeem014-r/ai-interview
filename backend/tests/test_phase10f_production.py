@@ -11,8 +11,8 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.ops.config import ProductionOpsConfig
-from app.ops.exceptions import (
+from app._archive.ops.config import ProductionOpsConfig
+from app._archive.ops.exceptions import (
     OpsError,
     OpsConfigurationError,
     OpsAuthenticationError,
@@ -22,19 +22,19 @@ from app.ops.exceptions import (
     ErrorCategory,
     classify_exception,
 )
-from app.ops.secrets import redact_secrets, sanitize_url, mask_secret_string
-from app.ops.correlation import CorrelationContext
-from app.ops.logging import ProductionLogger
-from app.ops.metrics import ProductionOpsMetrics, ops_metrics
-from app.ops.database import DatabaseResilience
-from app.ops.redis_resilience import RedisResilienceSupervisor
-from app.ops.storage_safety import StorageSafetySupervisor
-from app.ops.supervisor import JobSupervisor
-from app.ops.security import SecurityHardeningSupervisor
-from app.ops.validator import DeploymentValidator
-from app.ops.health import ProductionHealthService
-from app.ops.lifecycle import ProductionLifecycleCoordinator
-from app.ops.proxy import ReverseProxyHelper
+from app._archive.ops.secrets import redact_secrets, sanitize_url, mask_secret_string
+from app._archive.ops.correlation import CorrelationContext
+from app._archive.ops.logging import ProductionLogger
+from app._archive.ops.metrics import ProductionOpsMetrics, ops_metrics
+from app._archive.ops.database import DatabaseResilience
+from app._archive.ops.redis_resilience import RedisResilienceSupervisor
+from app._archive.ops.storage_safety import StorageSafetySupervisor
+from app._archive.ops.supervisor import JobSupervisor
+from app._archive.ops.security import SecurityHardeningSupervisor
+from app._archive.ops.validator import DeploymentValidator
+from app._archive.ops.health import ProductionHealthService
+from app._archive.ops.lifecycle import ProductionLifecycleCoordinator
+from app._archive.ops.proxy import ReverseProxyHelper
 
 
 # ==============================================================================
@@ -370,7 +370,7 @@ async def test_end_to_end_production_smoke_flow():
     ops_metrics.increment("request_count")
 
     # 3. Process voice turn with Phase 10E Voice Orchestrator
-    from app.voice_experience.orchestrator import VoiceInterviewOrchestrator
+    from app._archive.voice_experience.orchestrator import VoiceInterviewOrchestrator
     orch = VoiceInterviewOrchestrator()
     sid = orch.start_session(user_id=42, interview_id=101)
 
@@ -425,7 +425,7 @@ def test_backward_compatibility_with_all_previous_phases():
     assert RealtimeWebSocketDispatcher is not None
 
     # Phase 10C Production
-    from app.production.config import ProductionConfig
+    from app._archive.production.config import ProductionConfig
     assert ProductionConfig is not None
 
     # Phase 10D Providers
@@ -434,7 +434,7 @@ def test_backward_compatibility_with_all_previous_phases():
     assert ElevenLabsTTSProvider is not None
 
     # Phase 10E Voice Experience
-    from app.voice_experience.orchestrator import VoiceInterviewOrchestrator
+    from app._archive.voice_experience.orchestrator import VoiceInterviewOrchestrator
     assert VoiceInterviewOrchestrator is not None
 
 

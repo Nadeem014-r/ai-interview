@@ -10,7 +10,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.hardening.exceptions import (
+from app._archive.hardening.exceptions import (
     ProductionError,
     ValidationError,
     AuthenticationError,
@@ -24,19 +24,19 @@ from app.hardening.exceptions import (
     JobError,
     ResourceLimitError,
 )
-from app.hardening.security_policy import SecurityPolicy, default_security_policy
-from app.hardening.payload_defense import PayloadDefense
-from app.hardening.rate_limiting import TokenBucketLimiter, MultiTierRateLimiter
-from app.hardening.resilience import ResiliencePolicy
-from app.hardening.circuit_breaker import CircuitBreaker, CircuitState
-from app.hardening.redis_resilience import HardenedRedisClient
-from app.hardening.storage_resilience import HardenedStorageManager
-from app.hardening.job_safety import HardenedJobSupervisor
-from app.hardening.realtime_resilience import RealtimeTransportHardening
-from app.hardening.idempotency import IdempotencyEngine
-from app.hardening.timeout_governance import run_with_timeout
-from app.hardening.observability import HardenedTelemetryEngine
-from app.hardening.health import HardenedHealthPolicy
+from app._archive.hardening.security_policy import SecurityPolicy, default_security_policy
+from app._archive.hardening.payload_defense import PayloadDefense
+from app._archive.hardening.rate_limiting import TokenBucketLimiter, MultiTierRateLimiter
+from app._archive.hardening.resilience import ResiliencePolicy
+from app._archive.hardening.circuit_breaker import CircuitBreaker, CircuitState
+from app._archive.hardening.redis_resilience import HardenedRedisClient
+from app._archive.hardening.storage_resilience import HardenedStorageManager
+from app._archive.hardening.job_safety import HardenedJobSupervisor
+from app._archive.hardening.realtime_resilience import RealtimeTransportHardening
+from app._archive.hardening.idempotency import IdempotencyEngine
+from app._archive.hardening.timeout_governance import run_with_timeout
+from app._archive.hardening.observability import HardenedTelemetryEngine
+from app._archive.hardening.health import HardenedHealthPolicy
 
 
 # ==============================================================================
@@ -550,7 +550,7 @@ def test_realtime_hardening_multiple_ips_concurrency():
 
 def test_timeout_policy_dataclass_defaults():
     """Verify TimeoutPolicy defines bounded non-zero timeouts for all operational layers."""
-    from app.hardening.timeout_governance import default_timeout_policy
+    from app._archive.hardening.timeout_governance import default_timeout_policy
     assert default_timeout_policy.AI_LLM_TIMEOUT_SEC > 0.0
     assert default_timeout_policy.AI_STT_TIMEOUT_SEC > 0.0
     assert default_timeout_policy.AI_TTS_TIMEOUT_SEC > 0.0
@@ -597,7 +597,7 @@ def test_backward_compatibility_phases_1_to_10f():
     assert RealtimeWebSocketDispatcher is not None
 
     # Phase 10C Production
-    from app.production.config import ProductionConfig
+    from app._archive.production.config import ProductionConfig
     assert ProductionConfig is not None
 
     # Phase 10D Providers
@@ -605,12 +605,12 @@ def test_backward_compatibility_phases_1_to_10f():
     assert ElevenLabsTTSProvider is not None
 
     # Phase 10E Voice Experience
-    from app.voice_experience.orchestrator import VoiceInterviewOrchestrator
+    from app._archive.voice_experience.orchestrator import VoiceInterviewOrchestrator
     assert VoiceInterviewOrchestrator is not None
 
     # Phase 10F Ops
-    from app.ops.config import ProductionOpsConfig
-    from app.ops.health import ProductionHealthService
+    from app._archive.ops.config import ProductionOpsConfig
+    from app._archive.ops.health import ProductionHealthService
     assert ProductionOpsConfig is not None
     assert ProductionHealthService is not None
 

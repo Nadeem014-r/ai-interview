@@ -2,7 +2,7 @@ import asyncio
 import pytest
 from app.core.config import settings
 from app.core.database import engine
-from cleanup_unwanted_companies import cleanup_database
+from scripts.cleanup_unwanted_companies import cleanup_database
 
 @pytest.fixture(autouse=True, scope="session")
 def setup_test_environment():

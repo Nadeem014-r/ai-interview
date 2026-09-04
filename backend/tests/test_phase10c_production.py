@@ -11,8 +11,8 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.production.config import ProductionConfig, production_config
-from app.production.exceptions import (
+from app._archive.production.config import ProductionConfig, production_config
+from app._archive.production.exceptions import (
     ProductionError,
     ConfigurationError,
     SecurityConfigurationError,
@@ -22,31 +22,31 @@ from app.production.exceptions import (
     JobTimeoutError,
     HealthCheckError,
 )
-from app.production.environment import ProductionEnvironmentValidator
-from app.production.security import (
+from app._archive.production.environment import ProductionEnvironmentValidator
+from app._archive.production.security import (
     mask_secret,
     mask_sensitive_headers,
     mask_log_record,
     get_production_security_headers,
     SecurityValidator,
 )
-from app.production.storage import (
+from app._archive.production.storage import (
     ProductionLocalStorage,
     ProductionS3Storage,
 )
-from app.production.jobs import (
+from app._archive.production.jobs import (
     Job,
     JobStatus,
     ExponentialBackoffPolicy,
     ProductionJobManager,
     ProductionJobWorker,
 )
-from app.production.observability import (
+from app._archive.production.observability import (
     ProductionMetrics,
     StructuredProductionLogger,
 )
-from app.production.health import ProductionHealthChecker
-from app.production.lifecycle import ProductionLifecycleManager
+from app._archive.production.health import ProductionHealthChecker
+from app._archive.production.lifecycle import ProductionLifecycleManager
 
 
 # ==============================================================================

@@ -13,9 +13,9 @@ from jose import jwt, JWTError
 from app.core.config import settings
 from app.core.security import create_access_token
 from app.db.models import Interview, InterviewState
-from app.voice_experience.orchestrator import VoiceInterviewOrchestrator
-from app.voice_experience.models import TurnState, VoiceTurn
-from app.voice_experience.exceptions import (
+from app._archive.voice_experience.orchestrator import VoiceInterviewOrchestrator
+from app._archive.voice_experience.models import TurnState, VoiceTurn
+from app._archive.voice_experience.exceptions import (
     SilenceDetectedError,
     VoiceSessionOwnershipError,
     VoiceExperienceError,
@@ -24,24 +24,24 @@ from app.voice_experience.exceptions import (
 from app.providers.fallback import FallbackTTSProvider
 from app.providers.exceptions import ProviderUnavailableError
 from app.ai.mock_provider import MockTTSProvider, MockSTTProvider
-from app.hardening.security_policy import SecurityPolicy, default_security_policy
-from app.hardening.payload_defense import PayloadDefense
-from app.hardening.rate_limiting import TokenBucketLimiter, MultiTierRateLimiter
-from app.hardening.circuit_breaker import CircuitBreaker, CircuitState
-from app.hardening.storage_resilience import HardenedStorageManager
-from app.hardening.realtime_resilience import RealtimeTransportHardening
-from app.hardening.job_safety import HardenedJobSupervisor
-from app.hardening.idempotency import IdempotencyEngine
-from app.operations.correlation import OperationalCorrelation
-from app.operations.logging import OperationalLogger
-from app.operations.metrics import OperationalMetricsEngine, op_metrics
-from app.operations.cost_monitor import AICostMonitor, cost_monitor
-from app.operations.health import OperationalHealthService
-from app.operations.readiness import OperationalReadinessService
-from app.operations.alerts import AlertEngine, AlertSeverity
-from app.operations.backup import BackupManager
-from app.operations.diagnostics import ProductionDiagnosticsCollector
-from app.certification.certifier import ReleaseCertifier, certifier
+from app._archive.hardening.security_policy import SecurityPolicy, default_security_policy
+from app._archive.hardening.payload_defense import PayloadDefense
+from app._archive.hardening.rate_limiting import TokenBucketLimiter, MultiTierRateLimiter
+from app._archive.hardening.circuit_breaker import CircuitBreaker, CircuitState
+from app._archive.hardening.storage_resilience import HardenedStorageManager
+from app._archive.hardening.realtime_resilience import RealtimeTransportHardening
+from app._archive.hardening.job_safety import HardenedJobSupervisor
+from app._archive.hardening.idempotency import IdempotencyEngine
+from app._archive.operations.correlation import OperationalCorrelation
+from app._archive.operations.logging import OperationalLogger
+from app._archive.operations.metrics import OperationalMetricsEngine, op_metrics
+from app._archive.operations.cost_monitor import AICostMonitor, cost_monitor
+from app._archive.operations.health import OperationalHealthService
+from app._archive.operations.readiness import OperationalReadinessService
+from app._archive.operations.alerts import AlertEngine, AlertSeverity
+from app._archive.operations.backup import BackupManager
+from app._archive.operations.diagnostics import ProductionDiagnosticsCollector
+from app._archive.certification.certifier import ReleaseCertifier, certifier
 
 
 # ==============================================================================
@@ -190,7 +190,7 @@ def test_cert_audio_pipeline_chunking_and_buffering():
 
 def test_cert_interview_state_machine_transitions():
     """Certify valid voice turn lifecycle progression and rejection of illegal state skips."""
-    from app.voice_experience.turn_manager import VoiceTurnManager
+    from app._archive.voice_experience.turn_manager import VoiceTurnManager
     turn = VoiceTurn()
     assert turn.state == TurnState.IDLE
 
@@ -218,7 +218,7 @@ def test_cert_interview_state_machine_transitions():
 @pytest.mark.asyncio
 async def test_cert_redis_resilience_and_fallback_store():
     """Certify Redis operations degrade gracefully to safe fallback upon outage."""
-    from app.hardening.redis_resilience import HardenedRedisClient
+    from app._archive.hardening.redis_resilience import HardenedRedisClient
     mock_failing_store = AsyncMock()
     mock_failing_store.get.side_effect = TimeoutError("Redis cluster unreachable")
 
@@ -301,7 +301,7 @@ def test_cert_ai_cost_and_token_accounting():
 
 def test_cert_recovery_barge_in_interruption():
     """Certify candidate barge-in safely halts playback and allows next turn."""
-    from app.voice_experience.playback import PlaybackController
+    from app._archive.voice_experience.playback import PlaybackController
     turn = VoiceTurn()
     turn.state = TurnState.PLAYING
     turn.playback_started_at = time.monotonic()
@@ -316,17 +316,17 @@ def test_cert_recovery_barge_in_interruption():
 @pytest.mark.asyncio
 async def test_cert_concurrency_simulated_candidates():
     """Certify system handles concurrent candidate interview sessions offline."""
-    from app.operations.load_sim import LoadSimulator
+    from app._archive.operations.load_sim import LoadSimulator
     res = await LoadSimulator.simulate_concurrent_interviews(concurrency=10, turns_per_interview=2)
     assert res["successful_interviews"] == 10
     assert res["failed_interviews"] == 0
     certifier.record_verdict("Concurrency", True, "Simulated multi-candidate concurrency certified.")
 
 
-from app.operations.recovery import RecoveryTargets, DisasterRecoveryPolicy
-from app.operations.capacity import CapacityPlanner
-from app.operations.monitoring import OperationalMonitor
-from app.hardening.exceptions import ValidationError, CircuitOpenError
+from app._archive.operations.recovery import RecoveryTargets, DisasterRecoveryPolicy
+from app._archive.operations.capacity import CapacityPlanner
+from app._archive.operations.monitoring import OperationalMonitor
+from app._archive.hardening.exceptions import ValidationError, CircuitOpenError
 
 
 # ==============================================================================
@@ -549,9 +549,9 @@ def test_cert_release_certification_report_generation():
 
 def test_cert_cross_candidate_interview_tampering_blocked():
     """Certify security barrier blocks cross-candidate parameter tampering and unauthorized permissions."""
-    from app.voice_experience.permissions import PermissionHandler
-    from app.voice_experience.models import PermissionState
-    from app.voice_experience.exceptions import PermissionDeniedError
+    from app._archive.voice_experience.permissions import PermissionHandler
+    from app._archive.voice_experience.models import PermissionState
+    from app._archive.voice_experience.exceptions import PermissionDeniedError
 
     # Denied permission raises PermissionDeniedError
     with pytest.raises(PermissionDeniedError):
@@ -564,7 +564,7 @@ def test_cert_cross_candidate_interview_tampering_blocked():
 
 def test_cert_turn_state_machine_invalid_skips():
     """Certify invalid state skips (e.g. LISTENING directly to SYNTHESIZING) are rejected."""
-    from app.voice_experience.turn_manager import VoiceTurnManager
+    from app._archive.voice_experience.turn_manager import VoiceTurnManager
     turn = VoiceTurn()
     VoiceTurnManager.transition(turn, TurnState.LISTENING)
     with pytest.raises(TurnStateError):
@@ -597,7 +597,7 @@ def test_cert_cost_monitor_multi_session_aggregation():
 @pytest.mark.asyncio
 async def test_cert_shutdown_coordinator_drains_active_tasks():
     """Certify ShutdownCoordinator flushes telemetry and executes teardown hooks cleanly."""
-    from app.operations.shutdown import ShutdownCoordinator
+    from app._archive.operations.shutdown import ShutdownCoordinator
     coordinator = ShutdownCoordinator()
     cleaned = False
 
@@ -633,7 +633,7 @@ async def test_cert_comprehensive_chaos_failure_and_recovery_flow():
     assert turn.state == TurnState.PLAYING
 
     # 3. Barge-in
-    from app.voice_experience.playback import PlaybackController
+    from app._archive.voice_experience.playback import PlaybackController
     PlaybackController.interrupt_playback(turn)
     assert turn.state == TurnState.INTERRUPTED
 
@@ -675,7 +675,7 @@ def test_backward_compatibility_phases_1_to_10h():
     assert RealtimeWebSocketDispatcher is not None
 
     # Phase 10C Production
-    from app.production.config import ProductionConfig
+    from app._archive.production.config import ProductionConfig
     assert ProductionConfig is not None
 
     # Phase 10D Providers
@@ -683,21 +683,21 @@ def test_backward_compatibility_phases_1_to_10h():
     assert ElevenLabsTTSProvider is not None
 
     # Phase 10E Voice Experience
-    from app.voice_experience.orchestrator import VoiceInterviewOrchestrator
+    from app._archive.voice_experience.orchestrator import VoiceInterviewOrchestrator
     assert VoiceInterviewOrchestrator is not None
 
     # Phase 10F Ops
-    from app.ops.config import ProductionOpsConfig
+    from app._archive.ops.config import ProductionOpsConfig
     assert ProductionOpsConfig is not None
 
     # Phase 10G Hardening
-    from app.hardening.security_policy import SecurityPolicy
-    from app.hardening.circuit_breaker import CircuitBreaker
+    from app._archive.hardening.security_policy import SecurityPolicy
+    from app._archive.hardening.circuit_breaker import CircuitBreaker
     assert SecurityPolicy is not None
     assert CircuitBreaker is not None
 
     # Phase 10H Operations
-    from app.operations.metrics import OperationalMetricsEngine
-    from app.operations.health import OperationalHealthService
+    from app._archive.operations.metrics import OperationalMetricsEngine
+    from app._archive.operations.health import OperationalHealthService
     assert OperationalMetricsEngine is not None
     assert OperationalHealthService is not None

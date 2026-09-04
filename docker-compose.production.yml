@@ -38,7 +38,7 @@ services:
       dockerfile: Dockerfile.production
     container_name: ai_interviewer_worker_prod
     restart: unless-stopped
-    command: ["python", "-m", "app.production.lifecycle"]
+    command: ["python", "-m", "app._archive.production.lifecycle"]
     environment:
       - ENVIRONMENT=production
       - DEBUG=false

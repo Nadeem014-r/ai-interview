@@ -12,37 +12,37 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.operations.config import (
+from app._archive.operations.config import (
     ProductionConfigValidator,
     ValidationStatus,
     ConfigValidationResult,
 )
-from app.operations.correlation import OperationalCorrelation
-from app.operations.logging import OperationalLogger
-from app.operations.metrics import OperationalMetricsEngine
-from app.operations.cost_monitor import (
+from app._archive.operations.correlation import OperationalCorrelation
+from app._archive.operations.logging import OperationalLogger
+from app._archive.operations.metrics import OperationalMetricsEngine
+from app._archive.operations.cost_monitor import (
     AICostMonitor,
     ProviderPricing,
     cost_monitor,
 )
-from app.operations.db_health import DatabaseHealthMonitor
-from app.operations.redis_health import RedisHealthMonitor
-from app.operations.health import OperationalHealthService
-from app.operations.readiness import OperationalReadinessService
-from app.operations.alerts import (
+from app._archive.operations.db_health import DatabaseHealthMonitor
+from app._archive.operations.redis_health import RedisHealthMonitor
+from app._archive.operations.health import OperationalHealthService
+from app._archive.operations.readiness import OperationalReadinessService
+from app._archive.operations.alerts import (
     AlertSeverity,
     OperationalAlert,
     AlertEngine,
 )
-from app.operations.monitoring import OperationalMonitor
-from app.operations.startup import StartupOrchestrator
-from app.operations.shutdown import ShutdownCoordinator
-from app.operations.recovery import RecoveryTargets, DisasterRecoveryPolicy
-from app.operations.backup import BackupMetadata, BackupManager
-from app.operations.capacity import CapacityPlanner
-from app.operations.diagnostics import ProductionDiagnosticsCollector
-from app.operations.load_sim import LoadSimulator
-from app.operations.runbook import OperationalRunbook
+from app._archive.operations.monitoring import OperationalMonitor
+from app._archive.operations.startup import StartupOrchestrator
+from app._archive.operations.shutdown import ShutdownCoordinator
+from app._archive.operations.recovery import RecoveryTargets, DisasterRecoveryPolicy
+from app._archive.operations.backup import BackupMetadata, BackupManager
+from app._archive.operations.capacity import CapacityPlanner
+from app._archive.operations.diagnostics import ProductionDiagnosticsCollector
+from app._archive.operations.load_sim import LoadSimulator
+from app._archive.operations.runbook import OperationalRunbook
 
 
 # ==============================================================================
@@ -580,7 +580,7 @@ def test_backward_compatibility_phases_1_to_10g():
     assert RealtimeWebSocketDispatcher is not None
 
     # Phase 10C Production
-    from app.production.config import ProductionConfig
+    from app._archive.production.config import ProductionConfig
     assert ProductionConfig is not None
 
     # Phase 10D Providers
@@ -588,16 +588,16 @@ def test_backward_compatibility_phases_1_to_10g():
     assert ElevenLabsTTSProvider is not None
 
     # Phase 10E Voice Experience
-    from app.voice_experience.orchestrator import VoiceInterviewOrchestrator
+    from app._archive.voice_experience.orchestrator import VoiceInterviewOrchestrator
     assert VoiceInterviewOrchestrator is not None
 
     # Phase 10F Ops
-    from app.ops.config import ProductionOpsConfig
+    from app._archive.ops.config import ProductionOpsConfig
     assert ProductionOpsConfig is not None
 
     # Phase 10G Hardening
-    from app.hardening.security_policy import SecurityPolicy
-    from app.hardening.circuit_breaker import CircuitBreaker
+    from app._archive.hardening.security_policy import SecurityPolicy
+    from app._archive.hardening.circuit_breaker import CircuitBreaker
     assert SecurityPolicy is not None
     assert CircuitBreaker is not None
 

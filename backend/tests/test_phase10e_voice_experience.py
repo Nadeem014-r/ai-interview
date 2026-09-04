@@ -11,27 +11,27 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.db.models import Interview, InterviewState
 from app.providers.exceptions import ProviderAuthenticationError, ProviderUnavailableError
-from app.voice_experience.config import VoiceExperienceConfig
-from app.voice_experience.exceptions import (
+from app._archive.voice_experience.config import VoiceExperienceConfig
+from app._archive.voice_experience.exceptions import (
     VoiceExperienceError,
     TurnStateError,
     SilenceDetectedError,
     VoiceSessionOwnershipError,
     PermissionDeniedError,
 )
-from app.voice_experience.models import (
+from app._archive.voice_experience.models import (
     TurnState,
     PermissionState,
     LatencyClassification,
     VoiceTurn,
 )
-from app.voice_experience.turn_manager import VoiceTurnManager
-from app.voice_experience.playback import PlaybackController
-from app.voice_experience.diagnostics import VoiceDiagnostics
-from app.voice_experience.permissions import PermissionHandler
-from app.voice_experience.cleanup import AudioLifecycleManager
-from app.voice_experience.health import VoiceExperienceHealthChecker
-from app.voice_experience.orchestrator import VoiceInterviewOrchestrator
+from app._archive.voice_experience.turn_manager import VoiceTurnManager
+from app._archive.voice_experience.playback import PlaybackController
+from app._archive.voice_experience.diagnostics import VoiceDiagnostics
+from app._archive.voice_experience.permissions import PermissionHandler
+from app._archive.voice_experience.cleanup import AudioLifecycleManager
+from app._archive.voice_experience.health import VoiceExperienceHealthChecker
+from app._archive.voice_experience.orchestrator import VoiceInterviewOrchestrator
 
 
 # ==============================================================================
