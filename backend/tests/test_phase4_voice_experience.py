@@ -137,14 +137,14 @@ async def test_voice_04_to_06_stt_transcription_empty_rejection_and_tts_synthesi
     # 3. HTTP endpoint for STT transcription
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         h, _, _ = await create_candidate(client, "v_stt_test")
-        stt_http = await client.post("/api/v1/voice/stt", files={
+        stt_http = await client.post("/api/v1/voice/stt", headers=h, files={
             "file": ("test.wav", io.BytesIO(SAMPLE_WAV_AUDIO), "audio/wav")
         })
         assert stt_http.status_code == 200
         assert "transcript" in stt_http.json() or "text" in stt_http.json()
 
         # 4. HTTP endpoint for TTS synthesis
-        tts_http = await client.post("/api/v1/voice/tts", json={
+        tts_http = await client.post("/api/v1/voice/tts", headers=h, json={
             "text": "What are the primary trade-offs of microservices?"
         })
         assert tts_http.status_code == 200
@@ -302,7 +302,8 @@ async def test_voice_23_elevenlabs_provider_and_media_types():
 
     # 3. Test HTTP /voice/tts response media type contracts
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        res = await client.post("/api/v1/voice/tts", json={"text": "Hello world from AI interviewer."})
+        h, _, _ = await create_candidate(client, "v_tts_contract")
+        res = await client.post("/api/v1/voice/tts", headers=h, json={"text": "Hello world from AI interviewer."})
         assert res.status_code == 200
         assert res.headers.get("content-type") in ["audio/wav", "audio/mpeg"]
         assert len(res.content) > 0
@@ -330,7 +331,7 @@ async def test_voice_24_five_consecutive_turns_and_replay():
             assert len(q_text) > 0
 
             # Synthesize question text (simulating frontend auto-play / replay)
-            tts_res = await client.post("/api/v1/voice/tts", json={"text": q_text})
+            tts_res = await client.post("/api/v1/voice/tts", headers=headers, json={"text": q_text})
             assert tts_res.status_code == 200
 
             # Candidate answers

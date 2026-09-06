@@ -36,7 +36,8 @@ services:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/ai_interviewer_db
       - REDIS_URL=redis://redis:6379/0
       - ENVIRONMENT=production
-      - SECRET_KEY=production-secret-key-change-in-real-env!
+      # Supplied from the host environment / .env — never hardcoded here.
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set (32+ chars, high entropy)}
       - DEFAULT_LLM_PROVIDER=mock
     ports:
       - "8000:8000"

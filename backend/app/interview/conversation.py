@@ -12,6 +12,34 @@ from app.interview.memory import InterviewMemory, MemoryManager
 from app.interview.project_interrogator import ResumeProjectInterrogator, InterrogationDepth
 
 
+# ---------------------------------------------------------------------------
+# Fix 2 – Deduplication guard for canned recovery phrases
+# ---------------------------------------------------------------------------
+_CANNED_RECOVERY_PHRASES = [
+    "i see. that's completely okay",
+    "let's take a step back. can you tell me about a technology",
+    "that's completely okay. let's take a step back",
+    "let\'s take a step back",
+]
+
+
+def _is_canned_recovery_text(text: str, asked: list) -> bool:
+    """
+    Returns True if `text` is effectively a repeat of the canned recovery phrasing
+    OR matches any already-asked question, so the engine will generate a fresh probe.
+    """
+    if not text:
+        return True
+    lower = text.lower()
+    for phrase in _CANNED_RECOVERY_PHRASES:
+        if phrase in lower:
+            # Also block if an already-asked question contains the same canned phrasing
+            for asked_q in asked:
+                if phrase in asked_q.lower():
+                    return True
+    return False
+
+
 class FollowUpEngine:
     """Evaluates candidate answer depth and generates human-like follow-up probes with memory."""
 
@@ -338,34 +366,6 @@ class FollowUpEngine:
             "expected_concepts": ["Production readiness", "Reliability", "Edge case handling"],
             "follow_ups": ["How would you monitor this in production?"]
         }
-
-
-# ---------------------------------------------------------------------------
-# Fix 2 – Deduplication guard for canned recovery phrases
-# ---------------------------------------------------------------------------
-_CANNED_RECOVERY_PHRASES = [
-    "i see. that's completely okay",
-    "let's take a step back. can you tell me about a technology",
-    "that's completely okay. let's take a step back",
-    "let\'s take a step back",
-]
-
-
-def _is_canned_recovery_text(text: str, asked: list) -> bool:
-    """
-    Returns True if `text` is effectively a repeat of the canned recovery phrasing
-    OR matches any already-asked question, so the engine will generate a fresh probe.
-    """
-    if not text:
-        return True
-    lower = text.lower()
-    for phrase in _CANNED_RECOVERY_PHRASES:
-        if phrase in lower:
-            # Also block if an already-asked question contains the same canned phrasing
-            for asked_q in asked:
-                if phrase in asked_q.lower():
-                    return True
-    return False
 
 
     @staticmethod

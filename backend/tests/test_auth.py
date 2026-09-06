@@ -1,5 +1,8 @@
+import io
 import pytest
 import uuid
+from datetime import timedelta
+from jose import jwt
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.core.database import init_db, AsyncSessionLocal
@@ -257,3 +260,85 @@ async def test_onboarding_profile_persists_to_db():
         assert get_data["target_role"] == "Backend Engineer"
         assert get_data["university"] == "Stanford University"
         assert get_data["graduation_year"] == 2026
+
+
+# ==============================================================================
+# Audit C4: /voice/stt and /voice/tts must require a valid JWT
+# ==============================================================================
+
+# Minimal 44-byte RIFF/WAVE header + silent PCM frames (same shape the voice
+# suites use); hex-encoded so the literal carries no escape sequences.
+SAMPLE_WAV = bytes.fromhex(
+    "524946462400000057415645666d7420100000000100010044ac000088580100"
+    "020010006461746100000000"
+) + b"\x00" * 100
+
+
+def _voice_calls(client, headers=None):
+    """The two protected speech endpoints, invoked identically in every auth case."""
+    kwargs = {"headers": headers} if headers else {}
+    return [
+        client.post(
+            "/api/v1/voice/stt",
+            files={"file": ("recording.wav", io.BytesIO(SAMPLE_WAV), "audio/wav")},
+            **kwargs,
+        ),
+        client.post("/api/v1/voice/tts", json={"text": "Describe your experience."}, **kwargs),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_voice_endpoints_reject_missing_token():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for coro in _voice_calls(client):
+            res = await coro
+            assert res.status_code == 401, res.status_code
+
+
+@pytest.mark.asyncio
+async def test_voice_endpoints_reject_malformed_and_forged_tokens():
+    forged = jwt.encode(
+        {"sub": "1", "role": "admin"},
+        "attacker-supplied-signing-key-not-the-real-one",
+        algorithm="HS256",
+    )
+    for bad in ["not-a-jwt", "a.b.c", forged]:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for coro in _voice_calls(client, {"Authorization": f"Bearer {bad}"}):
+                res = await coro
+                assert res.status_code == 401, (bad[:12], res.status_code)
+
+
+@pytest.mark.asyncio
+async def test_voice_endpoints_reject_expired_token():
+    expired = create_access_token(
+        subject=1, role="candidate", expires_delta=timedelta(seconds=-10)
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for coro in _voice_calls(client, {"Authorization": f"Bearer {expired}"}):
+            res = await coro
+            assert res.status_code == 401, res.status_code
+
+
+@pytest.mark.asyncio
+async def test_voice_endpoints_accept_valid_token_and_preserve_response_format():
+    headers = {"Authorization": f"Bearer {create_access_token(subject=1, role='candidate')}"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        stt = await client.post(
+            "/api/v1/voice/stt",
+            headers=headers,
+            files={"file": ("recording.wav", io.BytesIO(SAMPLE_WAV), "audio/wav")},
+        )
+        assert stt.status_code == 200
+        assert "transcript" in stt.json() or "text" in stt.json()
+
+        tts = await client.post(
+            "/api/v1/voice/tts", headers=headers, json={"text": "Describe your experience."}
+        )
+        assert tts.status_code == 200
+        assert tts.headers.get("content-type", "").startswith("audio/")
+        assert int(tts.headers.get("content-length", 0)) > 0
+
+        # Existing validation behaviour is unchanged for authenticated callers
+        empty = await client.post("/api/v1/voice/tts", headers=headers, json={"text": "   "})
+        assert empty.status_code in (400, 422)

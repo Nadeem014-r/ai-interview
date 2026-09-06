@@ -428,10 +428,36 @@ def test_audio_validator_mime_types():
         AudioValidator.validate_audio(VALID_WAV_BYTES, mime_type="video/mp4")
 
 
-def test_audio_validator_extension_format_mismatch():
-    """Verify AudioValidator rejects when filename extension disagrees with magic header."""
-    with pytest.raises(UnsupportedAudioFormatError, match="does not match detected format"):
-        AudioValidator.validate_audio(VALID_WAV_BYTES, filename="audio.mp3")
+def test_audio_validator_classifies_by_content_not_filename_extension():
+    """Verify the filename extension is never trusted: the magic header decides.
+
+    Previously asserted the opposite -- that a name/content mismatch is
+    rejected. It is not, and must not be: the realtime WebSocket handler and the
+    STT fallback pass a fixed '.wav' placeholder for audio that is usually
+    WebM/Opus, and an upload with no filename is given a synthesised '.wav' name
+    by VoiceSecurity.sanitize_filename. Rejecting on mismatch would refuse that
+    legitimate browser audio while adding no safety, because the extension
+    influences no decision. What matters is that a lying filename cannot make
+    the payload be treated as the format it claims -- which is what this pins.
+    """
+    # A WAV payload named .mp3 is reported as the WAV it actually is.
+    meta = AudioValidator.validate_audio(VALID_WAV_BYTES, filename="audio.mp3")
+    assert meta.format == "wav"
+    assert meta.mime_type == "audio/wav"
+    assert meta.filename == "audio.mp3"
+
+    # The placeholder-name path the mounted WebSocket handler depends on.
+    meta_ws = AudioValidator.validate_audio(VALID_WEBM_BYTES, filename="answer.wav")
+    assert meta_ws.format == "webm"
+    assert meta_ws.mime_type == "audio/webm"
+
+    # An upload with no filename at all still classifies by content.
+    meta_unnamed = AudioValidator.validate_audio(VALID_WEBM_BYTES, filename=None)
+    assert meta_unnamed.format == "webm"
+
+    # An unrecognised header is still rejected fail-closed, whatever it is named.
+    with pytest.raises(UnsupportedAudioFormatError):
+        AudioValidator.validate_audio(b"\x00\x01\x02\x03" + b"\x00" * 80, filename="audio.wav")
 
 
 @pytest.mark.asyncio
@@ -510,8 +536,12 @@ async def test_early_conclusion_statement_and_recovery():
     company = Company(id=1, name="Google", slug="google")
     role = Role(id=1, title="Staff Software Engineer", company_id=1)
 
+    # get_early_conclusion_statement() deliberately omits the candidate name -- see
+    # its docstring ("without candidate name"). candidate_name stays part of the
+    # signature for API compatibility, so it is still passed here to pin that
+    # contract, and the name must not leak into the candidate-facing message.
     conclusion = InterviewPersonaBuilder.get_early_conclusion_statement(company=company, candidate_name="Alex")
-    assert "Alex" in conclusion
+    assert "Alex" not in conclusion
     assert "Google" in conclusion
     assert "time" in conclusion.lower()
 

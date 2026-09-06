@@ -122,7 +122,8 @@ def test_phase5_voice_session_lifecycle_and_cancellation():
 async def test_phase5_tts_synthesis_and_latency_headers():
     """Verify TTS synthesis endpoint returns correct audio media type and headers."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        res = await client.post("/api/v1/voice/tts", json={
+        h, _, _ = await create_candidate(client, "p5_tts_user")
+        res = await client.post("/api/v1/voice/tts", headers=h, json={
             "text": "Could you walk me through your experience with asynchronous programming in Python?"
         })
         assert res.status_code == 200
@@ -139,7 +140,8 @@ async def test_phase5_stt_transcription_and_empty_rejection():
     """Verify STT processes valid audio and rejects empty transcript safely."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # Valid speech
-        stt_res = await client.post("/api/v1/voice/stt", files={
+        h, _, _ = await create_candidate(client, "p5_stt_user")
+        stt_res = await client.post("/api/v1/voice/stt", headers=h, files={
             "file": ("recording.wav", io.BytesIO(SAMPLE_WAV_BYTES), "audio/wav")
         })
         assert stt_res.status_code == 200
@@ -186,7 +188,7 @@ async def test_phase5_multi_turn_voice_interview_and_completion():
             assert len(q_text) > 0
 
             # Synthesize question text (simulating AI speech)
-            tts_res = await client.post("/api/v1/voice/tts", json={"text": q_text})
+            tts_res = await client.post("/api/v1/voice/tts", headers=headers, json={"text": q_text})
             assert tts_res.status_code == 200
 
             # Submit candidate spoken answer

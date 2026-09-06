@@ -2,6 +2,7 @@ import logging
 from fastapi import APIRouter, Depends, UploadFile, File, Response, HTTPException
 from fastapi.responses import StreamingResponse
 import io
+from app.core.security import get_current_user_payload
 from app.voice.stt import SpeechToTextService
 from app.voice.tts import TextToSpeechService
 from app.schemas.interview import VoiceSynthesizeRequest
@@ -11,7 +12,10 @@ logger = logging.getLogger("ai_interviewer.voice_api")
 router = APIRouter(prefix="/voice", tags=["Voice Speech-to-Text & Text-to-Speech"])
 
 @router.post("/stt")
-async def transcribe_speech(file: UploadFile = File(...)):
+async def transcribe_speech(
+    file: UploadFile = File(...),
+    payload: dict = Depends(get_current_user_payload),
+):
     audio_bytes = await file.read()
     if not audio_bytes or len(audio_bytes) == 0:
         raise HTTPException(status_code=400, detail="Empty audio file provided.")
@@ -27,13 +31,24 @@ async def transcribe_speech(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Speech transcription error: {str(e)}")
 
 @router.post("/tts")
-async def synthesize_text(req: VoiceSynthesizeRequest):
+async def synthesize_text(
+    req: VoiceSynthesizeRequest,
+    payload: dict = Depends(get_current_user_payload),
+):
     if not req.text or not req.text.strip():
         raise HTTPException(status_code=400, detail="Text cannot be empty for TTS synthesis.")
 
     try:
         audio_bytes = await TextToSpeechService.synthesize(req.text, voice_id=req.voice_id or "default")
     except Exception as e:
+        # Simulated audio may stand in only where mocks are permitted. In
+        # production it would return a 440 Hz tone as the interviewer's voice
+        # under HTTP 200, hiding the outage from the caller.
+        from app.ai.factory import _implicit_mock_allowed
+
+        if not _implicit_mock_allowed():
+            logger.error(f"TextToSpeechService error: {e}")
+            raise HTTPException(status_code=503, detail="Speech synthesis is currently unavailable.")
         logger.warning(f"TextToSpeechService error: {e}. Attempting fallback synthesis.")
         try:
             from app.ai.mock_provider import MockTTSProvider

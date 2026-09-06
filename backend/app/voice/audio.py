@@ -6,7 +6,6 @@ and extracts structured metadata.
 
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
-from pathlib import Path
 
 from app.voice.exceptions import (
     AudioValidationError,
@@ -110,9 +109,20 @@ class AudioValidator:
         - Non-null, non-empty payload
         - Min/max byte boundaries
         - Filename safety (path traversal prevention)
-        - Extension and MIME format conformance
-        - Magic byte integrity
+        - Magic byte integrity, which alone determines the reported format
+        - MIME type conformance, when the caller supplies a MIME type
         - Duration limits (if provided or extractable)
+
+        The filename's extension is deliberately NOT trusted and is never
+        compared against the detected format. The bytes decide: an unrecognised
+        header is rejected outright, and a payload whose name disagrees with its
+        content is reported under the format its header proves. Callers rely on
+        this -- the realtime WebSocket handler and the STT fallback pass a fixed
+        '.wav' placeholder for audio that is usually WebM/Opus, and an upload
+        arriving without a filename is given a synthesised '.wav' name by
+        VoiceSecurity.sanitize_filename. Rejecting on a name/content mismatch
+        would reject that legitimate browser audio while adding no safety,
+        because the extension already influences no decision here.
         """
         # 1. Null / Empty Checks
         if audio_bytes is None:
@@ -129,16 +139,15 @@ class AudioValidator:
         if size > max_size_bytes:
             raise AudioTooLargeError(f"Audio payload size ({size} bytes) exceeds maximum limit ({max_size_bytes} bytes).")
 
-        # 3. Safe Filename
+        # 3. Safe Filename (sanitised for storage and logging only; its
+        # extension is not consulted -- see the note in the docstring)
         safe_filename = VoiceSecurity.sanitize_filename(filename)
-        ext = Path(safe_filename).suffix.lstrip(".").lower()
 
-        # 4. Magic Header Format Inspection
+        # 4. Magic Header Format Inspection -- the sole source of the format
         detected_format = AudioValidator.inspect_magic_format(audio_bytes)
         if not detected_format:
             raise UnsupportedAudioFormatError("Malformed or unrecognized audio binary header.")
 
-        # Conformance between file extension and detected binary format
         effective_format = detected_format
         if effective_format not in SUPPORTED_FORMATS:
             raise UnsupportedAudioFormatError(f"Detected format '{effective_format}' is not supported.")

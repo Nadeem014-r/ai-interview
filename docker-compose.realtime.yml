@@ -13,7 +13,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - REALTIME_USE_REDIS=true
       - REALTIME_STORAGE_PATH=/app/data/storage
-      - SECRET_KEY=${SECRET_KEY:-default_insecure_development_secret_key_for_testing_only_12345}
+      # Supplied from the host environment / .env — no insecure fallback.
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set (32+ chars, high entropy)}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
     volumes:

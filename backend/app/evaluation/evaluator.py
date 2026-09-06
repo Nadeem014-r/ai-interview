@@ -406,14 +406,35 @@ Return strict JSON:
             ]
             detected_misconceptions = [desc for pattern, desc in misconceptions_list if pattern in lower_ans]
 
-            # Detect off-topic / irrelevant answers
-            is_off_topic = (resp_state == "OFF_TOPIC") or (
-                concept_coverage == 0
-                and not any(w in lower_ans for w in [topic.lower(), "system", "data", "code", "algorithm", "design", "security", "database", "api", "network", "cache", "server", "memory", "function", "class", "table", "index", "btree", "lock", "cpu"])
-                and word_count > 3
-            ) or any(w in lower_ans for w in ["paris", "capital of france", "weather", "unrelated topic"])
+            # Detect off-topic / irrelevant answers.
+            # classify_response_quality_state() already ran is_off_topic_response(),
+            # which compares the answer against the expected concepts, the topic
+            # words, the question words and the full domain vocabulary. Re-deriving
+            # that verdict here from a whole-topic-string match plus a short literal
+            # word list contradicted it, forcing a valid answer whose wording simply
+            # missed that list to 0.0. The classifier is the single source of truth.
+            is_off_topic = (resp_state == "OFF_TOPIC")
 
-            is_hr = question_type in ["hr", "behavioral"] or any(w in topic.lower() for w in ["introduction", "motivation", "teamwork", "leadership"])
+            # A recovery question ("tell me about a technology or project you have
+            # personally worked with") is a personal-experience question, so it belongs
+            # to the same family as introduction/motivation. Its expected_concepts are
+            # semantic descriptors ("Demonstrated personal project"), never literal
+            # answer tokens, so the concept-coverage path below scores every recovery
+            # answer at 0 coverage and cannot separate a real project description from
+            # an empty one. Route it to the personal-experience branch instead.
+            is_hr = question_type in ["hr", "behavioral"] or any(w in topic.lower() for w in ["introduction", "motivation", "teamwork", "leadership", "practical project", "skills overview"])
+
+            # Detect technical depth and trade-off explanations
+            tech_depth_keywords = [
+                "b+ tree", "b+ trees", "b+tree", "b+trees", "btree", "btrees", "b-tree", "b-trees",
+                "disk i/o", "i/o", "o(log n)", "o(n)", "o(1)", "logarithmic", "constant time",
+                "constant-time", "write amplification", "page split", "page splits", "wal", "buffer pool",
+                "throughput", "latency", "overhead", "trade-off", "tradeoff", "trading off", "write cost",
+                "collision", "collisions", "chaining", "open addressing", "load factor",
+                "hash function", "hash table", "hash map", "concurrency", "race condition",
+                "deadlock", "organize data", "reduces disk", "reduce disk", "contiguous", "pointer"
+            ]
+            has_tech_depth = any(kw in lower_ans for kw in tech_depth_keywords)
 
             if is_off_topic:
                 c_score = 0.0
@@ -479,19 +500,7 @@ Return strict JSON:
                     missing = ["Background summary", "Role motivation"]
                     misconceptions = []
                     confidence = 0.80
-            # Detect technical depth and trade-off explanations
-            tech_depth_keywords = [
-                "b+ tree", "b+ trees", "b+tree", "b+trees", "btree", "btrees", "b-tree", "b-trees",
-                "disk i/o", "i/o", "o(log n)", "o(n)", "o(1)", "logarithmic", "constant time",
-                "constant-time", "write amplification", "page split", "page splits", "wal", "buffer pool",
-                "throughput", "latency", "overhead", "trade-off", "tradeoff", "trading off", "write cost",
-                "collision", "collisions", "chaining", "open addressing", "load factor",
-                "hash function", "hash table", "hash map", "concurrency", "race condition",
-                "deadlock", "organize data", "reduces disk", "reduce disk", "contiguous", "pointer"
-            ]
-            has_tech_depth = any(kw in lower_ans for kw in tech_depth_keywords)
-
-            if concept_coverage >= 0.7 or (has_tech_depth and word_count >= 15) or (word_count >= 25 and has_tech_depth):
+            elif concept_coverage >= 0.7 or (has_tech_depth and word_count >= 15) or (word_count >= 25 and has_tech_depth):
                 # Strong / Expert detailed answer
                 is_expert = any(w in lower_ans for w in ["amplification", "page split", "wal", "buffer pool", "write amplification", "page splits"]) or (concept_coverage >= 0.8 and word_count >= 25)
                 c_score = 9.5 if is_expert else 8.8

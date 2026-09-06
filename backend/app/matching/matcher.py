@@ -107,10 +107,12 @@ class JobMatchingEngine:
                 missing_skills.append(orig_s)
 
         if req_clean_list:
-            raw_skills_score = (len(matched_skills) / len(req_clean_list)) * 100.0
-            # Bug Fix 4: cap static keyword-only score at 85 %; the remaining
-            # headroom must be earned through live interview performance.
-            skills_score = min(raw_skills_score, 85.0)
+            # The component reports measured coverage of the role's requirements.
+            # It is published in the breakdown next to matched_skills and
+            # missing_skills, so a ceiling here would contradict them: a
+            # candidate holding every required skill would be shown an 85 %
+            # skills match with nothing listed as missing.
+            skills_score = (len(matched_skills) / len(req_clean_list)) * 100.0
         else:
             skills_score = 0.0
 

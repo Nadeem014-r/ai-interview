@@ -15,10 +15,15 @@ async def list_companies(db: AsyncSession = Depends(get_db)):
     res = await db.execute(stmt)
     companies = res.scalars().all()
     
-    # Seed official company & role catalog if database is empty
+    # Seed official company & role catalog if database is empty.
+    # seed_database() is the catalogue seeder app.db.seed_data actually defines;
+    # the name imported here previously did not exist, so this branch raised
+    # ImportError and a first request against a fresh deployment's empty
+    # database returned 500 instead of seeding. It opens and commits its own
+    # session, so the re-query below picks the new rows up.
     if not companies:
-        from app.db.seed_data import seed_all_companies_and_roles
-        await seed_all_companies_and_roles(db)
+        from app.db.seed_data import seed_database
+        await seed_database()
         stmt = select(Company).options(selectinload(Company.roles))
         res = await db.execute(stmt)
         companies = res.scalars().all()

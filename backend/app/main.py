@@ -22,6 +22,9 @@ from app.api.v1.jobs import router as jobs_router
 from app.api.v1.video import router as video_router
 
 # ── New voice live router (additive — non-breaking if import fails) ──────────
+setup_logging()
+logger = logging.getLogger("ai_interviewer.main")
+
 try:
     from app.api.v1.voice_live import router as voice_live_router
     _voice_live_available = True
@@ -29,8 +32,7 @@ except ImportError as _e:
     _voice_live_available = False
     logger.warning(f"voice_live router not available (non-fatal): {_e}")
 
-setup_logging()
-logger = logging.getLogger("ai_interviewer.main")
+
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -40,10 +42,12 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS middleware setup
+# CORS middleware setup. Origins are explicit (never "*") because credentialed
+# CORS is only valid against a concrete origin -- browsers reject "*" when
+# allow_credentials is on, so the wildcard was both insecure and unreliable.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -93,11 +97,32 @@ async def on_shutdown():
 
 @app.get("/health", tags=["Health Check"])
 async def health_check():
+    """Process-level health plus provider *configuration* status.
+
+    "healthy" means this process is serving. It does not mean the database is
+    reachable (see /health/readiness) and it does not mean the AI providers are
+    answering -- proving that would require a paid request on every probe.
+
+    `llm_provider` alone was misleading: it reported the configured name even
+    when that provider held no credentials and every call was silently served by
+    a mock. `llm_provider_configured` reports whether the named provider has what
+    it needs to be used at all, checked locally with no external call.
+    """
+    provider = (settings.DEFAULT_LLM_PROVIDER or "").strip().lower()
+    if provider == "gemini":
+        configured = bool(settings.GEMINI_API_KEY)
+    elif provider == "openai":
+        configured = bool(settings.OPENAI_API_KEY)
+    else:
+        # "mock" and any other explicitly selected provider need no credentials.
+        configured = True
+
     return {
         "status": "healthy",
         "app_name": settings.APP_NAME,
         "environment": settings.ENVIRONMENT,
-        "llm_provider": settings.DEFAULT_LLM_PROVIDER
+        "llm_provider": settings.DEFAULT_LLM_PROVIDER,
+        "llm_provider_configured": configured
     }
 
 @app.get("/health/liveness", tags=["Health Check"])

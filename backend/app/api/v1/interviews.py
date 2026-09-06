@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app.core.database import get_db
-from app.core.security import get_current_user_payload
+from app.core.security import get_current_user_payload, sanitize_input
 from app.db.models import User, Interview, InterviewState, Role, Question, Answer, Evaluation, Company, Resume, ResumeProfile
 from app.schemas.interview import (
     InterviewCreate, InterviewOut, CandidateAnswerSubmit,
@@ -386,19 +386,26 @@ async def submit_answer_turn(
             topic=question.topic,
             question_type=question.question_type or "technical"
         )
-    except Exception as e:
-        eval_dict = {
-            "correctness_score": 5.0,
-            "relevance_score": 5.0,
-            "reasoning_score": 5.0,
-            "depth_score": 5.0,
-            "communication_score": 6.0,
-            "overall_question_score": 5.2,
-            "feedback_text": "Answer recorded successfully. Evaluated using baseline rubric dimensions.",
-            "evidence": ["Answer successfully stored in interview session."],
-            "confidence_score": 0.7,
-            "human_review_required": False
-        }
+    except Exception:
+        # evaluate_answer() already handles LLM/provider failures with its own
+        # deterministic fallback; anything reaching here failed before that net
+        # was in place. Reuse the same rule-based evaluator rather than storing
+        # an unearned passing score.
+        try:
+            eval_dict = AnswerEvaluator._deterministic_fallback_evaluation(
+                safe_answer=sanitize_input(answer_in.answer_text.strip()),
+                expected_concepts=question.expected_concepts or [],
+                topic=question.topic,
+                question_type=question.question_type or "technical",
+                question_text=question.question_text
+            )
+        except Exception:
+            # Unrecoverable: the answer is already persisted, but no score can
+            # be justified, so report the failure instead of inventing one.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Answer saved, but evaluation is temporarily unavailable. Please retry."
+            )
 
     evaluation = Evaluation(
         answer_id=ans.id,

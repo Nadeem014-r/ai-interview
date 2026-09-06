@@ -460,9 +460,53 @@ async def test_failed_replacement_preserves_existing_resume():
         assert curr["filename"] == "valid.txt"
         assert "Python" in curr["resume_profile"]["skills"]
 
+async def _provision_specialised_roles():
+    """Give this module the frontend and ML roles its match assertions need.
+
+    GET /api/v1/companies seeds the full catalogue only when the companies table
+    is empty, and the session fixture in tests/conftest.py has already inserted
+    the approved companies -- each with a single "Software Engineer (Backend)"
+    role. So inside the suite that seeding never runs and the only roles present
+    require Python/FastAPI/SQL/Data Structures. A test asserting that a frontend
+    or ML candidate matches something must therefore create those roles itself
+    rather than depend on a row an unrelated module happened to leave behind.
+
+    Attached to their own company so no existing test's `comps[0]` role lookup
+    changes shape.
+    """
+    from app.db.models import Company, Role
+
+    tag = uuid.uuid4().hex[:8]
+    async with AsyncSessionLocal() as session:
+        company = Company(name=f"Specialised Roles {tag}", slug=f"specialised-{tag}")
+        session.add(company)
+        await session.commit()
+        await session.refresh(company)
+
+        session.add_all([
+            Role(
+                company_id=company.id,
+                title=f"Frontend Software Engineer {tag}",
+                level="Entry / L3",
+                required_skills=["React", "TypeScript", "JavaScript", "Next.js"],
+                key_topics=["Component Architecture", "Web Performance"],
+            ),
+            Role(
+                company_id=company.id,
+                title=f"Machine Learning Engineer {tag}",
+                level="Entry / L3",
+                required_skills=["Python", "PyTorch", "TensorFlow", "Machine Learning"],
+                key_topics=["Model Training", "Deep Learning"],
+            ),
+        ])
+        await session.commit()
+
+
 # 34. Two different resumes produce distinct, accurate role recommendations
 @pytest.mark.asyncio
 async def test_two_different_resumes_produce_different_role_matches():
+    await _provision_specialised_roles()
+
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # Initialize companies
         await client.get("/api/v1/companies")

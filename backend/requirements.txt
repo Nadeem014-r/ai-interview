@@ -25,4 +25,13 @@ websockets>=12.0             # Gemini Live API WebSocket client (Module 3)
 deepgram-sdk>=3.5.0         # Streaming STT via Deepgram Nova-2 (Module 3B)
 numpy>=1.26.0               # TF-IDF cosine similarity for taxonomy matching (Module 1)
 
-
+# ── Voice runtime dependencies (Kokoro TTS / Whisper STT active providers) ───
+# Imported at module load by app/providers/kokoro_tts.py and whisper_stt.py:
+torch>=2.13.0                # Kokoro synthesis tensors (top-level import)
+soundfile>=0.14.0            # WAV encode/decode in both voice providers
+# Imported when the active provider initialises its pipeline:
+transformers>=5.16.1         # Whisper ASR pipeline
+kokoro>=0.9.4                # Kokoro KPipeline (version per test_kokoro_whisper_integration.py)
+# Audio decode/resample path for browser-recorded audio:
+librosa>=1.0.0               # WebM/MP3 decode + resample to 16 kHz
+scipy>=1.18.1                # Resampling fallback in the Whisper decode path

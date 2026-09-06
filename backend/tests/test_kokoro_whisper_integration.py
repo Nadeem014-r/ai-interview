@@ -18,6 +18,12 @@ from app.providers.kokoro_tts import KokoroTTSProvider
 from app.providers.whisper_stt import WhisperSmallSTTProvider
 from app.providers.provider_manager import provider_manager
 from app.ai.factory import AIFactory
+from app.core.security import create_access_token
+
+
+def auth_headers() -> dict:
+    """Authorization header for the now-protected /voice/* endpoints."""
+    return {"Authorization": f"Bearer {create_access_token(subject=1, role='candidate')}"}
 
 
 @pytest.mark.asyncio
@@ -80,6 +86,7 @@ async def test_voice_tts_endpoint():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         res = await client.post(
             "/api/v1/voice/tts",
+            headers=auth_headers(),
             json={"text": "Can you explain the difference between processes and threads?", "voice_id": "default"}
         )
         assert res.status_code == 200
@@ -96,7 +103,7 @@ async def test_voice_stt_endpoint():
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         files = {"file": ("sample.wav", wav_bytes, "audio/wav")}
-        res = await client.post("/api/v1/voice/stt", files=files)
+        res = await client.post("/api/v1/voice/stt", headers=auth_headers(), files=files)
 
         assert res.status_code == 200
         data = res.json()
@@ -108,5 +115,5 @@ async def test_voice_stt_endpoint():
 async def test_tts_empty_text_rejection():
     """Test that empty or whitespace text in TTS is safely rejected."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        res = await client.post("/api/v1/voice/tts", json={"text": "   "})
+        res = await client.post("/api/v1/voice/tts", headers=auth_headers(), json={"text": "   "})
         assert res.status_code in (400, 422)

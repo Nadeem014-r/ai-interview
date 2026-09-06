@@ -11,7 +11,10 @@ Create a `.env` file in `backend/` based on `.env.example`:
 
 ```bash
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/ai_interviewer
-SECRET_KEY=your-secure-jwt-secret-key
+# Generate a unique value per deployment:
+#   python -c "import secrets; print(secrets.token_urlsafe(48))"
+SECRET_KEY=<generate-me>
+
 ENVIRONMENT=production
 DEFAULT_LLM_PROVIDER=gemini
 GEMINI_API_KEY=your-google-gemini-api-key

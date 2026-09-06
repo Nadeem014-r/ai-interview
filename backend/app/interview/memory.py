@@ -56,7 +56,9 @@ class ConversationTurnMemory:
     question_text: str
     candidate_answer: str
     topic: str
-    score: float
+    # None means the answer has no persisted Evaluation record: the turn is
+    # unscored. It must never be substituted with a passing or failing number.
+    score: Optional[float]
     key_technologies: List[str] = field(default_factory=list)
     demonstrated_concepts: List[str] = field(default_factory=list)
     missing_concepts: List[str] = field(default_factory=list)
@@ -230,8 +232,11 @@ class MemoryManager:
         demonstrated = eval_dict.get("demonstrated_concepts", []) if eval_dict else []
         missing = eval_dict.get("missing_concepts", []) if eval_dict else []
         misconceptions = eval_dict.get("misconceptions", []) if eval_dict else []
-        score = float(eval_dict.get("overall_question_score", 6.0)) if eval_dict else 6.0
-        depth_score = float(eval_dict.get("depth_score", 6.0)) if eval_dict else 6.0
+        # An absent eval_dict means no Evaluation was persisted for this answer.
+        # Leave the turn unscored instead of inventing a mid-range pass.
+        is_evaluated = bool(eval_dict)
+        score = float(eval_dict.get("overall_question_score", 6.0)) if is_evaluated else None
+        depth_score = float(eval_dict.get("depth_score", 6.0)) if is_evaluated else None
 
         if new_claim:
             memory.claims.append(new_claim)
@@ -259,13 +264,13 @@ class MemoryManager:
         if topic in memory.unexplored_topics:
             memory.unexplored_topics.remove(topic)
 
-        # Update mastery categories
-        if score >= 8.0:
+        # Update mastery categories (only where a real score exists)
+        if is_evaluated and score >= 8.0:
             if topic not in memory.strong_topics:
                 memory.strong_topics.append(topic)
             if topic in memory.weak_topics:
                 memory.weak_topics.remove(topic)
-        elif score < 5.0:
+        elif is_evaluated and score < 5.0:
             if topic not in memory.weak_topics:
                 memory.weak_topics.append(topic)
             if topic in memory.strong_topics:
@@ -298,7 +303,7 @@ class MemoryManager:
                 suggested_probe=f"Let's clarify {misconceptions[0]}. What happens under the hood?",
                 priority=1
             ))
-        elif depth_score < 5.5 and score >= 4.0:
+        elif is_evaluated and depth_score < 5.5 and score >= 4.0:
             memory.follow_up_queue.append(FollowUpOpportunity(
                 topic=topic,
                 target_claim=candidate_answer[:80],
@@ -306,7 +311,7 @@ class MemoryManager:
                 suggested_probe=f"You touched on {topic}. Can you walk through a concrete implementation example?",
                 priority=2
             ))
-        elif score >= 8.0:
+        elif is_evaluated and score >= 8.0:
             memory.follow_up_queue.append(FollowUpOpportunity(
                 topic=topic,
                 target_claim=candidate_answer[:80],
@@ -356,7 +361,8 @@ class MemoryManager:
         if recent_turns:
             turn_lines = []
             for t in recent_turns:
-                turn_lines.append(f"- Q{t.turn_index} ({t.topic}): {t.question_text}\n  Answer: \"{t.candidate_answer[:220]}\" (Score: {t.score}/10)")
+                score_str = f"{t.score}/10" if t.score is not None else "not evaluated"
+                turn_lines.append(f"- Q{t.turn_index} ({t.topic}): {t.question_text}\n  Answer: \"{t.candidate_answer[:220]}\" (Score: {score_str})")
             sections.append("RECENT CONVERSATION HISTORY:\n" + "\n".join(turn_lines))
 
         return "\n\n".join(sections)

@@ -15,6 +15,10 @@ from app.resume.parser import ResumeParser
 
 router = APIRouter(prefix="/resume", tags=["Resume Intelligence"])
 
+# Read granularity for bounded upload reads -- not a size limit. The limit
+# itself stays settings.MAX_FILE_SIZE_MB, enforced by ResumeValidator.
+UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
+
 @router.post("/upload", response_model=ResumeOut, status_code=status.HTTP_201_CREATED)
 async def upload_resume(
     file: UploadFile = File(...),
@@ -22,18 +26,34 @@ async def upload_resume(
     db: AsyncSession = Depends(get_db)
 ):
     user_id = payload["user_id"]
-    
-    # Read file content into memory
+
+    # Validate filename, extension and MIME type before reading any bytes.
+    ext = ResumeValidator.validate_file_metadata(file)
+
+    # Read the body in bounded chunks and stop as soon as the configured limit
+    # is exceeded, so an oversized upload is never fully buffered in memory.
+    max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
     try:
-        file_bytes = await file.read()
+        chunks = []
+        total_read = 0
+        while True:
+            chunk = await file.read(UPLOAD_READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total_read += len(chunk)
+            if total_read > max_bytes:
+                # Already past the limit; the size check below rejects it.
+                break
+        file_bytes = b"".join(chunks)
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Failed to read uploaded file."
         )
 
-    # Validate file extension, MIME type, size, and header signature
-    ext = ResumeValidator.validate_upload(file, file_bytes)
+    # Validate size, non-emptiness, and header signature
+    ResumeValidator.validate_file_content(file_bytes, ext)
 
     # Generate a safe, unique filename in a user-scoped storage directory
     safe_id = uuid.uuid4().hex

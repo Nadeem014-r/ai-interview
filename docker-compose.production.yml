@@ -12,7 +12,8 @@ services:
     environment:
       - ENVIRONMENT=production
       - DEBUG=false
-      - SECRET_KEY=${SECRET_KEY}
+      # Supplied from the host environment / .env — no insecure fallback.
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set (32+ chars, high entropy)}
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-appuser}:${POSTGRES_PASSWORD:-apppassword}@postgres:5432/${POSTGRES_DB:-ai_interviewer}
       - REDIS_URL=redis://redis:6379/0
       - USE_REDIS=true
@@ -42,7 +43,8 @@ services:
     environment:
       - ENVIRONMENT=production
       - DEBUG=false
-      - SECRET_KEY=${SECRET_KEY}
+      # Supplied from the host environment / .env — no insecure fallback.
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set (32+ chars, high entropy)}
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-appuser}:${POSTGRES_PASSWORD:-apppassword}@postgres:5432/${POSTGRES_DB:-ai_interviewer}
       - REDIS_URL=redis://redis:6379/0
       - USE_REDIS=true

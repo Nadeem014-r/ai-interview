@@ -59,12 +59,38 @@ def is_empty_response(text: Optional[str]) -> bool:
     return len(text.strip()) == 0
 
 
+# "pass" and "skip" are refusals only when they are the whole answer. Matched as
+# substrings they hit ordinary technical vocabulary -- "passwords", "passed by
+# reference", "bypass", "passes through", "skip list" -- and because
+# EXPLICIT_UNKNOWN short-circuits evaluate_answer() before the LLM is ever
+# called, a correct answer was returned as a hard 0.0. The engine applies the
+# same whole-answer rule to these two tokens in its own refusal check.
+STANDALONE_UNKNOWN_TOKENS = {"pass", "skip"}
+
+EXPLICIT_UNKNOWN_PHRASES = [
+    kw for kw in EXPLICIT_UNKNOWN_KEYWORDS if kw not in STANDALONE_UNKNOWN_TOKENS
+]
+
+
+def _phrase_normalized(text: str) -> str:
+    """Lowercase the text, flatten punctuation to spaces and pad both ends.
+
+    Padding plus flattening gives whole-word/phrase matching without a regex:
+    " pass " cannot match inside " passwords ", while " don't know " still
+    matches "I don't know." Apostrophes are kept so contractions survive.
+    """
+    return " " + "".join(c if (c.isalnum() or c == "'") else " " for c in text.lower()) + " "
+
+
 def is_explicit_unknown(text: Optional[str]) -> bool:
     """Check if candidate explicitly stated they don't know the answer."""
     if is_empty_response(text):
         return True
-    clean = text.strip().lower()
-    return any(kw in clean for kw in EXPLICIT_UNKNOWN_KEYWORDS)
+    normalized = _phrase_normalized(text)
+    tokens = normalized.split()
+    if tokens and all(t in STANDALONE_UNKNOWN_TOKENS for t in tokens):
+        return True
+    return any(f" {kw} " in normalized for kw in EXPLICIT_UNKNOWN_PHRASES)
 
 
 KNOWN_TECH_ACRONYMS = {

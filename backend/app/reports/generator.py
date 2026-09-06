@@ -6,6 +6,24 @@ from app.evaluation.scorer import DeterministicScorer
 from app.ai.factory import AIFactory
 
 
+# The single wording the platform uses when nothing in the transcript supports a
+# strength. app.ai.mock_provider returns it, the report prompt asks for it, and
+# the deterministic fallbacks below emit it, so a report never declares "no
+# evidence" in one vocabulary while the rest of the system uses another.
+NO_EVIDENCE_STRENGTH = "Insufficient evidence to identify demonstrated strengths."
+
+# Both phrasings are recognised on the way in: a model (or an older stored
+# report) may word the same declaration either way, and neither may be presented
+# as a demonstrated strength.
+_NO_EVIDENCE_MARKERS = ("insufficient evidence", "no specific strengths")
+
+
+def _is_no_evidence_statement(text: str) -> bool:
+    """True when a 'strength' is really a declaration that evidence is absent."""
+    lowered = str(text).lower()
+    return any(marker in lowered for marker in _NO_EVIDENCE_MARKERS)
+
+
 class ReportGenerator:
     """Evidence-based report generator grounded in candidate interview turns."""
 
@@ -98,7 +116,7 @@ OBSERVED INTERVIEW EVIDENCE:
 CRITICAL RULES FOR STRENGTHS AND FEEDBACK:
 1. STRICT EVIDENCE-BASED STRENGTHS: A strength may ONLY be reported when there is actual verified evidence in the candidate's answers.
 2. NO EVIDENCE = NO STRENGTH: If the candidate answered poorly, gave 1-word/evasive answers (e.g., 'yes', 'no', 'I don't know'), or scored low (overall < 40), DO NOT invent positive strengths. Set:
-   "strengths": ["No specific strengths could be identified from the available interview responses."]
+   "strengths": ["{NO_EVIDENCE_STRENGTH}"]
 3. Return demonstrated technical strengths grounded in the topics where candidate scored well.
 4. If the interview terminated early due to low performance, state clearly in executive_summary that the candidate demonstrated insufficient foundational knowledge.
 
@@ -123,11 +141,9 @@ Return JSON:
         if not isinstance(strengths, list):
             strengths = []
 
-        # Filter out generic placeholder strings if candidate performed adequately
-        cleaned_strengths = [
-            s for s in strengths
-            if "insufficient evidence" not in s.lower() and "no specific strengths" not in s.lower()
-        ]
+        # Separate real claims from the model's own "no evidence" declaration.
+        cleaned_strengths = [s for s in strengths if not _is_no_evidence_statement(s)]
+        no_evidence_statements = [s for s in strengths if _is_no_evidence_statement(s)]
 
         if overall_score >= 40.0 and count > 0:
             if len(cleaned_strengths) > 0:
@@ -144,9 +160,14 @@ Return JSON:
                 if rubric_scores.get("reasoning", 0) >= 5.5:
                     derived_strengths.append("Logical step-by-step problem-solving approach")
 
-                strengths = derived_strengths[:3] if derived_strengths else ["Demonstrated foundational technical knowledge in answered topics."]
+                # No topic reached the strong bar and no rubric dimension reached
+                # 5.5: there is nothing the transcript supports, so claim nothing.
+                strengths = derived_strengths[:3] if derived_strengths else [NO_EVIDENCE_STRENGTH]
         else:
-            strengths = ["No specific strengths could be identified from the available interview responses."]
+            # Below the reporting threshold no positive claim is defensible. Keep
+            # the model's own insufficiency statement when it made one -- that is
+            # its grounded output -- and state it deterministically otherwise.
+            strengths = no_evidence_statements[:1] or [NO_EVIDENCE_STRENGTH]
 
         # Weaknesses post-processing
         weaknesses = summary_json.get("weaknesses", [])

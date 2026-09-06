@@ -257,10 +257,16 @@ class AdaptiveInterviewEngine:
 
         # Handle Recovery Turn Outcome
         if was_recovery_turn:
-            # Candidate was given a recovery opportunity to explain something they know
+            # Candidate was given a recovery opportunity to explain something they know.
+            # The evaluation score and the answer's content must agree. The text checks
+            # corroborate an acceptable score; they never override a failing one. An
+            # articulate refusal clears any character or word-count threshold while
+            # disclaiming all knowledge, so length is not by itself evidence of recovery.
             has_meaningful_recovery = (
                 last_eval_score >= 4.0
-                or (not is_idontknow_or_empty and len(ans_lower) >= 15 and bool(re.findall(r'\b[a-zA-Z]{3,}\b', ans_lower)))
+                and not is_idontknow_or_empty
+                and len(ans_lower) >= 15
+                and bool(re.findall(r'\b[a-zA-Z]{3,}\b', ans_lower))
             )
 
             if has_meaningful_recovery:
@@ -280,7 +286,10 @@ class AdaptiveInterviewEngine:
 
         # Check Consecutive Foundational Failure Threshold (Knowledge Floor)
         # Inspect recent turns to avoid terminating on a single mistake
-        recent_turns = memory.conversation_turns[-3:] if memory.conversation_turns else []
+        # Only turns with a persisted Evaluation carry a performance signal.
+        # Unscored turns are excluded so a missing evaluation neither triggers
+        # nor suppresses recovery.
+        recent_turns = [t for t in memory.conversation_turns if t.score is not None][-3:]
         consecutive_struggling = 0
         for t in reversed(recent_turns):
             t_ans_lower = (t.candidate_answer or "").lower().strip()
@@ -428,13 +437,16 @@ class AdaptiveInterviewEngine:
                 interview_type=interview.interview_type
             )
 
-            # Mark current topic covered
+            # Mark current topic covered. covered_topics/remaining_topics are
+            # plain JSON columns with no MutableList tracking, so an in-place
+            # append/remove is invisible to the session and is discarded on
+            # commit. Reassigning the attribute marks it dirty and persists.
             if state.current_topic and state.current_topic not in (state.covered_topics or []):
-                if state.covered_topics is None:
-                    state.covered_topics = []
-                state.covered_topics.append(state.current_topic)
+                state.covered_topics = (state.covered_topics or []) + [state.current_topic]
                 if state.remaining_topics and state.current_topic in state.remaining_topics:
-                    state.remaining_topics.remove(state.current_topic)
+                    remaining = list(state.remaining_topics)
+                    remaining.remove(state.current_topic)
+                    state.remaining_topics = remaining
 
             next_diff, next_topic, skill_scores, weak, strong = AdaptiveStateMachine.adapt_difficulty_and_topic(
                 current_difficulty=state.difficulty,

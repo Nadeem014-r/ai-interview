@@ -1,8 +1,8 @@
 """Module 2C: Background JD Refresh Scheduler.
 
 Registers an asyncio background task on FastAPI startup that refreshes
-JD cache entries every 24 hours for all active company/role combinations
-stored in the database.
+JD cache entries every 24 hours for the company/role combinations stored in
+the database.
 
 Registration: call `start_background_scraper(app, db_factory)` in main.py startup.
 """
@@ -17,25 +17,45 @@ logger = logging.getLogger("ai_interviewer.background_scraper")
 
 _scraper_task: Optional[asyncio.Task] = None  # module-level handle for graceful shutdown
 
+# Source.source_type values that denote a job description. "official_job_desc"
+# is what app/research/pipeline.py records; "job_desc" is the value documented
+# on the Source model itself.
+_JD_SOURCE_TYPES = ("official_job_desc", "job_desc")
+
 
 async def _scrape_all_active_roles(db_factory: Callable) -> None:
-    """Fetch all active roles from DB and refresh their JD cache entries."""
+    """Fetch roles from DB and refresh their JD cache entries.
+
+    The Role model carries no activity flag, so every stored role is refreshed.
+    """
     try:
         from app.matching.jd_scraper import JDScrapingService
         from sqlalchemy import select
-        from app.db.models import Role, Company
+        from app.db.models import Role, Company, Source
 
         async with db_factory() as db:
             stmt = (
                 select(Role, Company)
                 .join(Company, Role.company_id == Company.id)
-                .where(Role.is_active.is_(True))
             )
             result = await db.execute(stmt)
             rows = result.all()
 
+            # Role has no jd_url column; job-description URLs live in the
+            # sources table. Resolve them in one query keyed by role, keeping
+            # the most recently fetched URL per role.
+            jd_rows = (
+                await db.execute(
+                    select(Source.role_id, Source.source_url)
+                    .where(Source.role_id.is_not(None))
+                    .where(Source.source_type.in_(_JD_SOURCE_TYPES))
+                    .order_by(Source.fetched_at.asc())
+                )
+            ).all()
+            jd_urls = {role_id: url for role_id, url in jd_rows}
+
         if not rows:
-            logger.info("BackgroundScraper: no active roles found, skipping cycle.")
+            logger.info("BackgroundScraper: no roles found, skipping cycle.")
             return
 
         logger.info(f"BackgroundScraper: refreshing JD cache for {len(rows)} roles.")
@@ -44,7 +64,7 @@ async def _scrape_all_active_roles(db_factory: Callable) -> None:
                 await JDScrapingService.scrape(
                     company_name=company.name,
                     role_title=role.title,
-                    jd_url=getattr(role, "jd_url", None),
+                    jd_url=jd_urls.get(role.id),
                 )
                 logger.debug(f"BackgroundScraper: refreshed '{company.name} / {role.title}'")
             except Exception as exc:
