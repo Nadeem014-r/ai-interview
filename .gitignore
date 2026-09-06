@@ -117,3 +117,6 @@ $RECYCLE.BIN/
 *.swp
 *.swo
 *~
+
+# Local resume/PII scratch data used by backend/scripts/manual_checks (never commit)
+backend/actual_user_resume_raw.txt
