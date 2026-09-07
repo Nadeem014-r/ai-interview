@@ -54,6 +54,17 @@ class STTProviderError(STTError):
     pass
 
 
+class NoSpeechDetectedError(STTError):
+    """The provider succeeded but the audio carried no intelligible speech.
+
+    This is a property of the upload -- silence, background noise, or a
+    recognition loop -- not a fault of the server or the provider, so callers
+    map it to a client error and invite the candidate to speak again. It stays
+    a subclass of STTError so existing handlers keep working.
+    """
+    pass
+
+
 class TTSError(VoiceError):
     """Base exception for Text-to-Speech operations."""
     pass

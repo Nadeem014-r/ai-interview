@@ -23,11 +23,26 @@ async def transcribe_speech(
         res = await SpeechToTextService.transcribe(audio_bytes, filename=file.filename or "recording.wav")
         return res
     except Exception as e:
-        logger.error(f"Speech transcription failed: {e}", exc_info=True)
         # Check if it was empty / silent audio or invalid format
-        from app.voice.exceptions import AudioValidationError, UnsupportedAudioFormatError
+        from app.voice.exceptions import (
+            AudioValidationError,
+            NoSpeechDetectedError,
+            UnsupportedAudioFormatError,
+        )
         if isinstance(e, (AudioValidationError, UnsupportedAudioFormatError)):
+            logger.warning(f"Rejected audio upload: {e}")
             raise HTTPException(status_code=400, detail=str(e))
+        if isinstance(e, NoSpeechDetectedError):
+            # The server and the provider both worked; the recording simply held
+            # no speech. Reporting 500 told the candidate the system had broken
+            # and raised a false alarm in error monitoring, so this is a 400 with
+            # an instruction the candidate can act on.
+            logger.info("No speech detected in uploaded audio.")
+            raise HTTPException(
+                status_code=400,
+                detail="No speech was detected in the recording. Please speak clearly and try again.",
+            )
+        logger.error(f"Speech transcription failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Speech transcription error: {str(e)}")
 
 @router.post("/tts")

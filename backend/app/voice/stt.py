@@ -17,6 +17,7 @@ from app.voice.exceptions import (
     STTError,
     STTTimeoutError,
     STTProviderError,
+    NoSpeechDetectedError,
     VoiceCancelledError,
     AudioValidationError,
 )
@@ -31,24 +32,49 @@ _HALLUCINATION_REPEAT_RE = re.compile(
     re.IGNORECASE
 )
 
+# A transcript is treated as a silence hallucination only when its tokens are
+# genuinely repetitive: at least this many words, repeating so heavily that the
+# average distinct word appears REPEAT_RATIO times or more.
+_MIN_LOOP_WORDS = 4
+_REPEAT_RATIO = 3
+
+
 def deduplicate_hallucination(text: str) -> str:
     """
     Collapse runs of a repeated short phrase (e.g. "Okay. Okay. Okay. Okay.")
     into a single instance.  If the entire transcript degenerates into such
     filler, return an empty string so the caller can discard it as silence.
+
+    Only *repetition* justifies discarding a transcript. Shortness does not:
+    "B-trees", "Binary search", "No idea" and "no" are complete, legitimate
+    spoken answers, and a candidate who gives a correct one-word answer must
+    have it transcribed, not deleted as silence.
+
+    The discard decision is therefore made on the ratio of total words to
+    distinct words in the *original* text, before collapsing. Measuring after
+    the collapse would hide the very evidence being tested -- the regexes above
+    rewrite "okay okay okay okay" to a single "okay", which is indistinguishable
+    from a candidate who simply said "okay" once.
     """
     if not text:
         return text
+
+    original = text.strip()
+
     # Replace repeated-phrase run with a single occurrence
-    collapsed = _HALLUCINATION_REPEAT_RE.sub(r'\1', text)
+    collapsed = _HALLUCINATION_REPEAT_RE.sub(r'\1', original)
     # Secondary pass: remove runs of the same word/punctuation token
     collapsed = re.sub(r'\b(\w+)(?:\s+\1){3,}\b', r'\1', collapsed, flags=re.IGNORECASE)
     collapsed = collapsed.strip()
-    # If the result is only 1–2 distinct words after collapsing, treat as filler
-    distinct_words = set(w.lower() for w in re.findall(r'[a-zA-Z]+', collapsed))
-    if len(distinct_words) <= 2 and len(collapsed) < 30:
+
+    # Judge repetition on the original token stream. Apostrophes are kept so
+    # "don't" counts as one word rather than two.
+    words = re.findall(r"[A-Za-z']+", original)
+    distinct_words = {w.lower() for w in words}
+    if len(words) >= _MIN_LOOP_WORDS and len(distinct_words) * _REPEAT_RATIO <= len(words):
         # High confidence this was a hallucination loop — discard as silence
         return ""
+
     return collapsed
 
 
@@ -117,8 +143,20 @@ class SpeechToTextService:
         stt_latency = tracker.stop_stage("stt")
 
         # 4. Transcript Normalization & Verification
-        if not isinstance(res, dict):
-            res = {"text": str(res)}
+        # A provider may legitimately answer with a bare transcript string, but
+        # anything else is a malformed response and must not be coerced. This
+        # was `res = {"text": str(res)}`, which turned a provider returning None
+        # into the transcript "None" -- a fabricated answer that was then
+        # persisted and evaluated as the candidate's own words.
+        if isinstance(res, str):
+            res = {"text": res}
+        elif not isinstance(res, dict):
+            if session:
+                session.transition_to(VoiceSessionState.FAILED)
+            raise STTProviderError(
+                "STT provider returned an unusable response of type "
+                f"{type(res).__name__}."
+            )
 
         raw_text = res.get("text") or res.get("transcript") or ""
         # Bug Fix 2: collapse silence-hallucination loops before any further checks
@@ -127,7 +165,9 @@ class SpeechToTextService:
         if not clean_text:
             if session:
                 session.transition_to(VoiceSessionState.FAILED)
-            raise STTError("STT provider returned an empty or whitespace transcript.")
+            raise NoSpeechDetectedError(
+                "STT provider returned an empty or whitespace transcript."
+            )
 
         res["text"] = clean_text
         res["transcript"] = clean_text
