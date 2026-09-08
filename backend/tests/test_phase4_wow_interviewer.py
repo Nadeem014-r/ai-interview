@@ -207,10 +207,17 @@ async def test_p4_06_to_08_answer_validation_duplicate_prevention_and_persistenc
             state_obj.current_question_id = persisted_answers[0].question_id
             await db.commit()
 
-        # Requirement 7: Prevent duplicate answer submission on the same question
+        # Requirement 7: a duplicate submission for a question that already has a
+        # scored answer must not create a second answer or evaluation. It is now
+        # answered by replaying the recorded turn instead of rejected with 400.
         dup_res = await client.post(f"/api/v1/interviews/{int_id}/answer", headers=headers, json={"answer_text": "Submitting duplicate answer for first question."})
-        assert dup_res.status_code == 400
-        assert "already answered" in dup_res.json()["detail"].lower()
+        assert dup_res.status_code == 200
+
+        async with AsyncSessionLocal() as db:
+            stmt = select(Answer).where(Answer.interview_id == int_id)
+            after_dup = (await db.execute(stmt)).scalars().all()
+            assert len(after_dup) == len(persisted_answers), "duplicate submission must not add an answer"
+            assert after_dup[0].candidate_answer_text == valid_text
 
 
 # ==============================================================================

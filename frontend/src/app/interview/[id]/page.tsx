@@ -28,6 +28,8 @@ export default function InterviewInteractionPage() {
   const [submitting, setSubmitting] = useState(false);
   const [showTurnHistory, setShowTurnHistory] = useState(false);
   const [concludingMessage, setConcludingMessage] = useState<string>("");
+  // Spoken reaction to the answer just given, voiced ahead of the next question.
+  const [interviewerAck, setInterviewerAck] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [preStartSeconds, setPreStartSeconds] = useState(10);
 
@@ -203,6 +205,10 @@ export default function InterviewInteractionPage() {
         method: "POST",
         body: JSON.stringify({
           answer_text: textToSubmit,
+          // Name the question this answer was written for, so a resubmission
+          // (retry after a timeout, a second tab) is recognised as the same
+          // turn instead of being scored against the next question.
+          question_id: currentQuestion.id,
           audio_url: audioUrl || null,
           stt_latency_ms: 0
         }),
@@ -213,6 +219,11 @@ export default function InterviewInteractionPage() {
       }
 
       setCandidateAnswer("");
+      setInterviewerAck(
+        typeof response.interviewer_ack === "string" && response.interviewer_ack.trim()
+          ? response.interviewer_ack.trim()
+          : null
+      );
 
       // 1. Update evaluation feedback
       let score = 5.0;
@@ -586,6 +597,8 @@ export default function InterviewInteractionPage() {
                 <VoiceInterviewRoom
                   interviewId={Number(sessionId)}
                   currentQuestionText={currentQuestion?.question_text || "Listening for question..."}
+                  currentQuestionId={currentQuestion?.id}
+                  interviewerAck={interviewerAck}
                   questionNumber={currentQuestionNumber}
                   difficulty={currentQuestion?.difficulty || session.state?.difficulty || "medium"}
                   questionType={currentQuestion?.question_type || session.interview_type || "technical"}

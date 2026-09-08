@@ -224,7 +224,19 @@ class AdaptiveInterviewEngine:
             if prev_q_obj and hasattr(prev_q_obj, 'question_text') and prev_q_obj.question_text:
                 prev_q_text = prev_q_obj.question_text
 
-        if last_answer_text:
+        # build_interview_memory() replays every persisted answer, and the API
+        # persists this turn's answer before calling in -- so ingesting again
+        # unconditionally recorded the same turn twice. Every downstream count
+        # then double-weighted the newest answer: a single weak reply looked
+        # like two consecutive failures and pushed the interview into recovery,
+        # and from there into an early conclusion, far sooner than intended.
+        last_turn = memory.conversation_turns[-1] if memory.conversation_turns else None
+        already_ingested = bool(
+            last_turn
+            and (last_turn.candidate_answer or "").strip() == (last_answer_text or "").strip()
+            and (last_turn.question_text or "") == prev_q_text
+        )
+        if last_answer_text and not already_ingested:
             MemoryManager.ingest_turn(
                 memory=memory,
                 question_text=prev_q_text,
@@ -376,7 +388,16 @@ class AdaptiveInterviewEngine:
         # 5. Determine if a targeted conversational follow-up probe is warranted
         depth_score = float(last_eval_dict.get("depth_score", 7.0)) if last_eval_dict else 7.0
         evidence_list = last_eval_dict.get("evidence", []) if last_eval_dict else []
-        turn_count_on_topic = 1 + (state.covered_topics or []).count(state.current_topic)
+        # covered_topics records each topic at most once, and only when the
+        # engine advances off it -- so counting it never exceeded 1 and the
+        # "at most two follow-ups per topic" budget in should_follow_up() could
+        # never fire. The interview drilled a single topic indefinitely while
+        # the remaining competencies went unasked. The turns already spent on
+        # this topic are what the budget is about, so count those.
+        turn_count_on_topic = max(
+            1,
+            sum(1 for t in memory.conversation_turns if t.topic == state.current_topic)
+        )
 
         should_follow_up, reason_cat = FollowUpEngine.should_follow_up(
             last_eval_score=last_eval_score,

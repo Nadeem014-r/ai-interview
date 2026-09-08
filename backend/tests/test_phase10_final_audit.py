@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, patch
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
+from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.db.models import Base, User, Company, Role, Interview, InterviewState, Question, Report
 from app.core.security import create_access_token, get_password_hash
@@ -88,16 +89,26 @@ async def test_phase10_admin_authorization_and_role_enforcement(async_db: AsyncS
 
 
 @pytest.mark.asyncio
-async def test_phase10_idor_protection_between_candidates(async_db: AsyncSession):
-    """Verify Candidate A cannot view Candidate B's interview session or report."""
-    u1 = User(full_name="Candidate One", email="c1@univ.edu", hashed_password="pw", role="candidate")
-    u2 = User(full_name="Candidate Two", email="c2@univ.edu", hashed_password="pw", role="candidate")
+async def test_phase10_idor_protection_between_candidates():
+    """Verify Candidate A cannot view Candidate B's interview session or report.
+
+    The records are created in the database the application itself reads. This
+    test previously built them in a private in-memory database, so the id it
+    then requested over the API resolved against unrelated rows -- and the
+    result depended on which other tests had run first.
+    """
+    import uuid as _uuid
+
+    suffix = _uuid.uuid4().hex[:8]
+    async_db = AsyncSessionLocal()
+    u1 = User(full_name="Candidate One", email=f"c1_{suffix}@univ.edu", hashed_password="pw", role="candidate")
+    u2 = User(full_name="Candidate Two", email=f"c2_{suffix}@univ.edu", hashed_password="pw", role="candidate")
     async_db.add_all([u1, u2])
     await async_db.commit()
     await async_db.refresh(u1)
     await async_db.refresh(u2)
 
-    comp = Company(name="TechCorp", slug="techcorp")
+    comp = Company(name=f"TechCorp {suffix}", slug=f"techcorp-{suffix}")
     async_db.add(comp)
     await async_db.commit()
     await async_db.refresh(comp)
@@ -122,8 +133,10 @@ async def test_phase10_idor_protection_between_candidates(async_db: AsyncSession
             f"/api/v1/interviews/{int_u2.id}",
             headers={"Authorization": f"Bearer {u1_token}"}
         )
-        assert res.status_code == 403
+        assert res.status_code == 403, res.text
         assert "unauthorized" in res.json()["detail"].lower()
+
+    await async_db.close()
 
 
 @pytest.mark.asyncio

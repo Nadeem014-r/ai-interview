@@ -77,6 +77,13 @@ function downsamplePCMBuffer(buffer: Float32Array, inputSampleRate: number, outp
 interface VoiceInterviewRoomProps {
   interviewId: number;
   currentQuestionText: string;
+  /** Identity of the active question. Turn advancement is keyed on this rather
+   *  than on the question text, so a repeated or reworded question still counts
+   *  as a new turn instead of leaving the room stuck mid-turn. */
+  currentQuestionId?: number;
+  /** Short sentence the interviewer says in reaction to the previous answer,
+   *  spoken immediately before the next question. */
+  interviewerAck?: string | null;
   questionNumber: number;
   difficulty: string;
   questionType: string;
@@ -102,6 +109,15 @@ type RealtimeVoiceState =
   | "audio_blocked"
   | "error";
 
+// Shown in sequence while the answer is being scored and the next question
+// prepared, so a multi-second wait reads as deliberation rather than a hang.
+const PROCESSING_STAGES = [
+  "Listening back to your answer...",
+  "Considering your response...",
+  "Preparing the next question...",
+  "Almost there..."
+];
+
 const VAD_SPEECH_THRESHOLD = 15;
 const VAD_SILENCE_TIMEOUT_MS = 2800;
 const VAD_MIN_SPEECH_DURATION_MS = 1200;
@@ -110,6 +126,8 @@ const BARGE_IN_TRIGGER_MS = 400;
 export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
   interviewId,
   currentQuestionText,
+  currentQuestionId,
+  interviewerAck,
   questionNumber,
   difficulty,
   questionType,
@@ -126,6 +144,7 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
   const [spokenTranscript, setSpokenTranscript] = useState<string>("");
   const [latencyMetrics, setLatencyMetrics] = useState<{ ttsMs?: number; sttMs?: number; totalMs?: number }>({});
   const [activeSubtitleText, setActiveSubtitleText] = useState<string>(currentQuestionText || "");
+  const [processingStage, setProcessingStage] = useState<number>(0);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -136,6 +155,7 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
   const animationFrameRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const lastSpokenQuestionRef = useRef<string>("");
+  const questionIdAtSubmitRef = useRef<number | null>(null);
 
   // SINGLE-AUDIO-OWNER CONTROLLER & PROMISE REFS
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -299,40 +319,117 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
     }
   };
 
-  // Synthesize and play AI speech via Kokoro with caching and immediate speech
+  // Speak a line as the interviewer.
+  //
+  // ONE voice owns the whole session. Previously the first question played
+  // pre-fetched Kokoro audio (a female voice) while every later question fired
+  // the browser's Web Speech API immediately -- which on Windows defaults to a
+  // male SAPI voice -- and only cached Kokoro in the background. The result was
+  // an interviewer who changed gender between question one and question two.
+  // Server TTS is now always awaited, and the browser synthesiser is a genuine
+  // failure path rather than the normal one.
   const speakQuestion = async (text: string) => {
     if (!text || !text.trim()) return;
 
-    const cachedUrl = (typeof window !== "undefined" && (window as any).__TTS_AUDIO_CACHE__?.[text]) || cachedAudioMapRef.current[text];
+    stopCurrentInterviewerAudio();
+    setErrorMessage(null);
+
+    const cachedUrl =
+      (typeof window !== "undefined" && (window as any).__TTS_AUDIO_CACHE__?.[text]) ||
+      cachedAudioMapRef.current[text];
     if (cachedUrl) {
       await playAudioUrl(cachedUrl, text);
       return;
     }
 
+    // The candidate can read the line while synthesis runs, so the wait reads
+    // as a natural pause rather than a stall.
+    setActiveSubtitleText(text);
+    setVoiceState("tts_loading");
+
     try {
-      stopCurrentInterviewerAudio();
-      setVoiceState("ai_speaking");
-      setErrorMessage(null);
-
-      // Start browser speech immediately so there is ZERO delay or loading spinner
-      speakWithBrowserSpeech(text);
-
-      // Background cache Kokoro audio for subsequent turns/replays
-      fetchTTSAudio(text);
+      const audioUrl = await fetchTTSAudio(text);
+      if (audioUrl) {
+        await playAudioUrl(audioUrl, text);
+        return;
+      }
     } catch (err) {
-      console.warn("TTS synthesis error:", err);
-      speakWithBrowserSpeech(text);
+      console.warn("Interviewer TTS synthesis failed, using browser speech:", err);
     }
+
+    // Server TTS unavailable. Browser speech keeps the interview running.
+    speakWithBrowserSpeech(text);
   };
 
-  // Automatically speak active question ONCE when it becomes active
+  // Automatically speak the active question ONCE when it becomes active.
+  //
+  // Keyed on question identity, not text: two turns can legitimately carry the
+  // same wording (a repeated probe, a reworded follow-up), and keying on text
+  // meant such a turn never fired this effect at all -- leaving the room frozen
+  // on "Evaluating Answer..." with the microphone closed.
   useEffect(() => {
-    if (currentQuestionText && currentQuestionText.trim() && currentQuestionText !== lastSpokenQuestionRef.current) {
-      lastSpokenQuestionRef.current = currentQuestionText;
-      setActiveSubtitleText(currentQuestionText);
-      speakQuestion(currentQuestionText);
-    }
-  }, [currentQuestionText]);
+    if (!currentQuestionText || !currentQuestionText.trim()) return;
+
+    const turnKey = `${currentQuestionId ?? "n/a"}::${currentQuestionText}`;
+    if (turnKey === lastSpokenQuestionRef.current) return;
+    lastSpokenQuestionRef.current = turnKey;
+
+    // A reaction to the previous answer is spoken as part of the same utterance
+    // so the interviewer responds to the candidate before moving on, the way a
+    // person does, instead of firing the next item into silence.
+    const ack = (interviewerAck || "").trim();
+    const spokenLine = ack ? `${ack} ${currentQuestionText}` : currentQuestionText;
+
+    setActiveSubtitleText(spokenLine);
+    speakQuestion(spokenLine);
+  }, [currentQuestionId, currentQuestionText]);
+
+  // Chrome populates getVoices() asynchronously and returns [] on the first
+  // call, so the opening line used to be spoken by whatever the OS default was
+  // (a male voice on Windows) while later lines picked a different voice from
+  // the by-then-loaded list. Priming the list once and pinning a single voice
+  // for the session keeps the interviewer sounding like one person.
+  const pinnedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const prime = () => {
+      pinnedVoiceRef.current = null;
+      resolveBrowserVoice();
+    };
+    prime();
+    window.speechSynthesis.addEventListener?.("voiceschanged", prime);
+    return () => window.speechSynthesis.removeEventListener?.("voiceschanged", prime);
+  }, []);
+
+  // Kokoro's default interviewer voice (af_heart) is female, so the browser
+  // fallback prefers a female English voice too. Falling back mid-session then
+  // changes the audio quality, never the person.
+  const resolveBrowserVoice = (): SpeechSynthesisVoice | null => {
+    if (pinnedVoiceRef.current) return pinnedVoiceRef.current;
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
+
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices || voices.length === 0) return null;
+
+    const english = voices.filter((v) => v.lang && v.lang.toLowerCase().startsWith("en"));
+    if (english.length === 0) return null;
+
+    const FEMALE_HINTS = ["zira", "aria", "jenny", "michelle", "samantha", "female", "eva", "libby", "sonia"];
+    const isFemale = (v: SpeechSynthesisVoice) =>
+      FEMALE_HINTS.some((h) => v.name.toLowerCase().includes(h));
+    const isHighQuality = (v: SpeechSynthesisVoice) =>
+      /natural|neural|google/i.test(v.name);
+
+    const chosen =
+      english.find((v) => isFemale(v) && isHighQuality(v)) ||
+      english.find(isFemale) ||
+      english.find(isHighQuality) ||
+      english[0];
+
+    pinnedVoiceRef.current = chosen || null;
+    return pinnedVoiceRef.current;
+  };
 
   // Browser Native Web Speech API fallback
   const speakWithBrowserSpeech = (text: string) => {
@@ -351,18 +448,7 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
 
-      const getBestVoice = () => {
-        const voices = window.speechSynthesis.getVoices();
-        return (
-          voices.find(
-            (v) =>
-              v.lang.startsWith("en") &&
-              (v.name.includes("Natural") || v.name.includes("Google") || v.name.includes("Neural"))
-          ) || voices.find((v) => v.lang.startsWith("en"))
-        );
-      };
-
-      const preferredVoice = getBestVoice();
+      const preferredVoice = resolveBrowserVoice();
       if (preferredVoice) utterance.voice = preferredVoice;
 
       utterance.onstart = () => {
@@ -685,6 +771,12 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
       const totalTurnMs = Math.round(performance.now() - turnStartTimeRef.current);
       setLatencyMetrics((m) => ({ ...m, totalMs: totalTurnMs }));
 
+      // Remember which question this answer belongs to. onAnswerSubmitted
+      // resolves the same way whether the turn advanced or failed, so this is
+      // what lets the room tell "next question is coming" from "the submit
+      // errored and nothing will ever arrive".
+      questionIdAtSubmitRef.current = currentQuestionId ?? null;
+      setProcessingStage(0);
       await onAnswerSubmitted(transcript, audioUrl);
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : "Failed to process speech";
@@ -692,6 +784,56 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
       setErrorMessage(errorMsg || "An error occurred while processing speech. Click below to retry speaking.");
     }
   };
+
+  // Recover the turn when the parent finished submitting but no new question
+  // arrived -- an evaluation error, a network failure, a rejected submit. The
+  // room used to sit in "processing" forever with the microphone closed, which
+  // is the state that looked like a frozen screen and needed a page reload.
+  const prevSubmittingRef = useRef<boolean>(submitting);
+  useEffect(() => {
+    const wasSubmitting = prevSubmittingRef.current;
+    prevSubmittingRef.current = submitting;
+
+    if (!wasSubmitting || submitting) return;
+    if (isConcluding) return;
+
+    const advanced =
+      questionIdAtSubmitRef.current === null ||
+      currentQuestionId !== questionIdAtSubmitRef.current;
+    if (advanced) return;
+
+    setVoiceState("error");
+    setErrorMessage(
+      "That answer was recorded, but the interviewer could not continue just now. Click Retry Speaking to carry on."
+    );
+  }, [submitting]);
+
+  // Last-resort watchdog. Nothing should hold "processing" this long; if
+  // something does, the candidate gets a way out instead of a dead screen.
+  useEffect(() => {
+    if (voiceState !== "processing" && voiceState !== "tts_loading") return;
+    const timer = window.setTimeout(() => {
+      setVoiceState((cur) => {
+        if (cur !== "processing" && cur !== "tts_loading") return cur;
+        setErrorMessage(
+          "This is taking longer than expected. Click Retry Speaking to continue the interview."
+        );
+        return "error";
+      });
+    }, 75000);
+    return () => window.clearTimeout(timer);
+  }, [voiceState]);
+
+  // Rolling reassurance while the interviewer thinks. A spinner that never
+  // changes for fifteen seconds reads as a crash; visible progress reads as
+  // someone considering an answer.
+  useEffect(() => {
+    if (voiceState !== "processing") return;
+    const timer = window.setInterval(() => {
+      setProcessingStage((n) => Math.min(n + 1, PROCESSING_STAGES.length - 1));
+    }, 3500);
+    return () => window.clearInterval(timer);
+  }, [voiceState]);
 
   const handleUnblockAudio = async () => {
     try {
@@ -819,7 +961,7 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
                 </span>
               )}
 
-              {voiceState === "processing" && (
+              {(voiceState === "processing" || voiceState === "tts_loading") && (
                 <span
                   style={{
                     display: "inline-flex",
@@ -833,7 +975,10 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
                     fontWeight: 700
                   }}
                 >
-                  <Loader2 size={14} className="animate-spin" /> Evaluating Answer...
+                  <Loader2 size={14} className="animate-spin" />
+                  {voiceState === "tts_loading"
+                    ? "Interviewer is about to speak..."
+                    : PROCESSING_STAGES[processingStage]}
                 </span>
               )}
             </div>
@@ -1074,11 +1219,14 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
                 </>
               )}
 
-              {(voiceState === "error" || voiceState === "idle" || voiceState === "tts_loading") && (
+              {(voiceState === "error" || voiceState === "idle") && (
                 <>
                   <button
-                    onClick={() => transitionToListening()}
-                    disabled={submitting || voiceState === "tts_loading"}
+                    onClick={() => {
+                      setErrorMessage(null);
+                      transitionToListening();
+                    }}
+                    disabled={submitting}
                     className="btn btn-primary"
                     style={{
                       background: "#6366f1",
@@ -1095,7 +1243,6 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
 
                   <button
                     onClick={handleListenAgain}
-                    disabled={voiceState === "tts_loading"}
                     className="btn btn-secondary"
                     style={{
                       background: "rgba(255, 255, 255, 0.15)",

@@ -481,23 +481,28 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
       return;
     }
 
+    // ONE voice owns the whole session. Starting browser speech immediately
+    // while Kokoro was fetched only for the cache meant the first question
+    // (pre-warmed Kokoro, female) and every later question (Windows SAPI,
+    // male by default) were spoken by different voices. Server TTS is now
+    // always awaited; the browser synthesiser is a real failure path only.
+    stopCurrentInterviewerAudio();
+    setErrorMessage(null);
+    // Show the line straight away so the wait for audio reads as a pause.
+    setActiveSubtitleText(text);
+    setVoiceState("tts_loading");
+
     try {
-      stopCurrentInterviewerAudio();
-      // Bug Fix 5b: immediately set ai_speaking so any lingering "processing" /
-      // "Evaluating Answer..." badge is cleared before TTS begins.
-      setVoiceState("ai_speaking");
-      setActiveSubtitleText(text);
-      setErrorMessage(null);
-
-      // Start browser speech immediately so there is ZERO delay or loading spinner
-      speakWithBrowserSpeech(text);
-
-      // Background cache Kokoro audio for subsequent turns/replays
-      fetchTTSAudio(text);
+      const audioUrl = await fetchTTSAudio(text);
+      if (audioUrl) {
+        await playAudioUrl(audioUrl, text);
+        return;
+      }
     } catch (err) {
-      console.warn("TTS synthesis error:", err);
-      speakWithBrowserSpeech(text);
+      console.warn("Interviewer TTS synthesis failed, using browser speech:", err);
     }
+
+    speakWithBrowserSpeech(text);
   };
 
   // Automatically speak active question ONCE when it becomes active
@@ -508,6 +513,50 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
       speakQuestion(currentQuestionText);
     }
   }, [currentQuestionText]);
+
+  // Chrome returns [] from getVoices() on the first call, so the opening line
+  // was spoken by the OS default (male on Windows) and later lines by whatever
+  // the loaded list offered. Pinning one voice for the session, and priming the
+  // list when it arrives, keeps the interviewer sounding like one person.
+  const pinnedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const prime = () => {
+      pinnedVoiceRef.current = null;
+      resolveBrowserVoice();
+    };
+    prime();
+    window.speechSynthesis.addEventListener?.("voiceschanged", prime);
+    return () => window.speechSynthesis.removeEventListener?.("voiceschanged", prime);
+  }, []);
+
+  // Kokoro's interviewer voice (af_heart) is female, so the fallback prefers a
+  // female English voice: dropping to it changes audio quality, not the person.
+  const resolveBrowserVoice = (): SpeechSynthesisVoice | null => {
+    if (pinnedVoiceRef.current) return pinnedVoiceRef.current;
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
+
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices || voices.length === 0) return null;
+
+    const english = voices.filter((v) => v.lang && v.lang.toLowerCase().startsWith("en"));
+    if (english.length === 0) return null;
+
+    const FEMALE_HINTS = ["zira", "aria", "jenny", "michelle", "samantha", "female", "eva", "libby", "sonia"];
+    const isFemale = (v: SpeechSynthesisVoice) =>
+      FEMALE_HINTS.some((h) => v.name.toLowerCase().includes(h));
+    const isHighQuality = (v: SpeechSynthesisVoice) => /natural|neural|google/i.test(v.name);
+
+    const chosen =
+      english.find((v) => isFemale(v) && isHighQuality(v)) ||
+      english.find(isFemale) ||
+      english.find(isHighQuality) ||
+      english[0];
+
+    pinnedVoiceRef.current = chosen || null;
+    return pinnedVoiceRef.current;
+  };
 
   // Browser Native Web Speech API fallback
   const speakWithBrowserSpeech = (text: string) => {
@@ -526,14 +575,7 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
 
-      const voices = window.speechSynthesis.getVoices();
-      const preferredVoice =
-        voices.find(
-          (v) =>
-            v.lang.startsWith("en") &&
-            (v.name.includes("Natural") || v.name.includes("Google") || v.name.includes("Neural"))
-        ) || voices.find((v) => v.lang.startsWith("en"));
-
+      const preferredVoice = resolveBrowserVoice();
       if (preferredVoice) utterance.voice = preferredVoice;
 
       utterance.onstart = () => {
@@ -1512,10 +1554,13 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                   </>
                 )}
 
-                {(voiceState === "error" || voiceState === "idle" || voiceState === "tts_loading") && (
+                {(voiceState === "error" || voiceState === "idle") && (
                   <>
                     <button
-                      onClick={() => transitionToListening()}
+                      onClick={() => {
+                        setErrorMessage(null);
+                        transitionToListening();
+                      }}
                       disabled={submitting}
                       className="btn btn-primary"
                       style={{ padding: "0.65rem 1.5rem", fontSize: "0.9rem", borderRadius: "10px" }}

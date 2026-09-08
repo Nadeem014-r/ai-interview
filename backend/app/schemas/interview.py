@@ -98,11 +98,19 @@ class InterviewOut(BaseModel):
 
 class CandidateAnswerSubmit(BaseModel):
     answer_text: str
+    # The question this answer was written for. Optional for older clients, which
+    # fall back to whichever question the interview state currently points at --
+    # but that makes a resubmitted answer land on the *next* question instead of
+    # being recognised as the same turn. Sending it makes a retry idempotent.
+    question_id: Optional[int] = None
     audio_url: Optional[str] = None
     stt_latency_ms: Optional[int] = 0
 
 class AnswerTurnResponse(BaseModel):
     evaluation: Dict[str, Any]
+    # Short sentence the interviewer says aloud in reaction to the answer just
+    # given, before asking next_question. Empty means "say nothing extra".
+    interviewer_ack: Optional[str] = None
     next_question: Optional[QuestionOut] = None
     interview_state: InterviewStateOut
     is_completed: bool

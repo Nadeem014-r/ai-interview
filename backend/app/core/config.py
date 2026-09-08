@@ -71,7 +71,6 @@ class Settings(BaseSettings):
     DEFAULT_TTS_PROVIDER: str = "kokoro"
     
     GEMINI_API_KEY: str = ""
-    GEMINI_DEFAULT_MODEL: str = "gemini-3.6-flash"
     OPENAI_API_KEY: str = ""
     ELEVENLABS_API_KEY: str = ""
 
@@ -109,13 +108,25 @@ class Settings(BaseSettings):
     LLM_ENABLE_FALLBACK: bool = True
     LLM_TEMPERATURE: float = 0.7
     LLM_MAX_OUTPUT_TOKENS: int = 2048
-    LLM_REQUEST_TIMEOUT_SECONDS: float = 30.0
-    LLM_MAX_RETRIES: int = 3
+    # These bound how long a candidate can sit staring at "Evaluating answer..."
+    # mid-interview. At 30s x 4 attempts a single slow call blocked the turn for
+    # over two minutes, which reads as a frozen screen. Every LLM caller on the
+    # interview path has a deterministic fallback, so failing fast and degrading
+    # is strictly better here than retrying into a stall.
+    LLM_REQUEST_TIMEOUT_SECONDS: float = 25.0
+    LLM_MAX_RETRIES: int = 1
     LLM_RETRY_BACKOFF_FACTOR: float = 0.5
     LLM_MAX_INPUT_TOKENS: int = 8000
     LLM_CONTEXT_WINDOW_LIMIT: int = 32000
 
-    GEMINI_DEFAULT_MODEL: str = "gemini-3.6-flash"
+    # Interview turns are latency-critical: the candidate waits on this call
+    # between speaking and hearing the next question. flash-lite answers a full
+    # evaluation in ~2s. Do NOT swap in a "thinking" model (gemini-3.x-flash /
+    # -pro) without also raising LLM_MAX_OUTPUT_TOKENS well above the JSON size
+    # -- reasoning tokens are billed against maxOutputTokens, so a thinking
+    # model silently truncates the evaluation JSON and the turn falls back to
+    # canned output.
+    GEMINI_DEFAULT_MODEL: str = "gemini-3.5-flash-lite"
     GEMINI_EMBEDDING_MODEL: str = "text-embedding-004"
     OPENAI_DEFAULT_MODEL: str = "gpt-4o-mini"
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"

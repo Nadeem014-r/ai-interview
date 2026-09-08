@@ -1,9 +1,12 @@
+import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
-from app.core.database import get_db
+from app.core.database import get_db, engine as _db_engine
 from app.core.security import get_current_user_payload, sanitize_input
 from app.db.models import User, Interview, InterviewState, Role, Question, Answer, Evaluation, Company, Resume, ResumeProfile
 from app.schemas.interview import (
@@ -16,6 +19,103 @@ from app.evaluation.evaluator import AnswerEvaluator
 from app.reports.generator import ReportGenerator
 
 router = APIRouter(prefix="/interviews", tags=["Adaptive Interview Engine"])
+
+# ── Turn serialisation ────────────────────────────────────────────────────────
+#
+# A turn is four separate commits (answer, evaluation, state, next question).
+# The "has this question already been answered?" guard is a SELECT taken before
+# the first of them, so two submissions for the same interview that overlap in
+# that window both read "no answer yet" and both insert one -- duplicate answers,
+# duplicate evaluations, and a questions_asked_count that no longer matches the
+# stored answers. Serialising per interview closes that window.
+#
+# The asyncio lock covers the whole turn within this process. The Postgres row
+# lock additionally covers the SELECT-then-INSERT window across workers; it is
+# released by the turn's first commit, which is why the in-process lock is kept
+# as well rather than replaced.
+_TURN_LOCKS: dict[int, asyncio.Lock] = {}
+_TURN_LOCKS_GUARD = asyncio.Lock()
+
+# Row-level locking is Postgres/MySQL syntax; SQLite has no FOR UPDATE and
+# serialises writers itself, so the in-process lock is the whole guarantee there.
+_SUPPORTS_ROW_LOCK = _db_engine.dialect.name in ("postgresql", "mysql")
+
+
+@asynccontextmanager
+async def _interview_turn_lock(interview_id: int):
+    async with _TURN_LOCKS_GUARD:
+        lock = _TURN_LOCKS.setdefault(interview_id, asyncio.Lock())
+    await lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
+        async with _TURN_LOCKS_GUARD:
+            # Drop the entry only when nobody else holds or awaits it, so the
+            # registry cannot grow once for every interview ever run.
+            if not lock.locked() and _TURN_LOCKS.get(interview_id) is lock:
+                _TURN_LOCKS.pop(interview_id, None)
+
+
+def _eval_dict_from_row(ev: Evaluation) -> dict:
+    """Rebuild the response payload from a stored evaluation, for replays."""
+    return {
+        "correctness_score": ev.correctness_score,
+        "relevance_score": ev.relevance_score,
+        "reasoning_score": ev.reasoning_score,
+        "depth_score": ev.depth_score,
+        "communication_score": ev.communication_score,
+        "overall_question_score": ev.overall_question_score,
+        "feedback_text": ev.feedback_text,
+        "evidence": ev.evidence or [],
+        "confidence_score": ev.confidence_score,
+        "human_review_required": ev.human_review_required,
+    }
+
+
+def _state_out_from(state) -> InterviewStateOut:
+    return InterviewStateOut(
+        current_topic=state.current_topic,
+        difficulty=state.difficulty,
+        time_remaining_seconds=state.time_remaining_seconds,
+        questions_asked_count=state.questions_asked_count,
+        current_question_id=state.current_question_id,
+        skill_scores=state.skill_scores or {},
+        weak_topics=state.weak_topics or [],
+        strong_topics=state.strong_topics or [],
+        covered_topics=state.covered_topics or [],
+        remaining_topics=state.remaining_topics or [],
+        interview_stage=state.interview_stage
+    )
+
+
+async def _replay_turn(db: AsyncSession, interview: Interview, state, evaluation: Evaluation) -> AnswerTurnResponse:
+    """Return the already-computed result of a turn without repeating it.
+
+    Used when a submission targets a question that has already been answered and
+    scored: the retry gets the same evaluation and the same pending question it
+    would have got had the original response reached it, and nothing new is
+    written.
+    """
+    next_q_out = None
+    if interview.status != "completed" and state and state.current_question_id:
+        res_q = await db.execute(select(Question).where(Question.id == state.current_question_id))
+        nq = res_q.scalars().first()
+        if nq:
+            next_q_out = QuestionOut(
+                id=nq.id, topic=nq.topic, subtopic=nq.subtopic, difficulty=nq.difficulty,
+                question_type=nq.question_type, question_text=nq.question_text,
+                expected_concepts=nq.expected_concepts or [], follow_ups=nq.follow_ups or []
+            )
+    return AnswerTurnResponse(
+        evaluation=_eval_dict_from_row(evaluation),
+        next_question=next_q_out,
+        interview_state=_state_out_from(state),
+        is_completed=interview.status == "completed",
+        closing_message=None,
+        termination_reason=state.interview_stage if interview.status == "completed" else None
+    )
+
 
 def format_interview_out(interview: Interview, current_q: Question = None, answers: list = None) -> InterviewOut:
     formatted_answers = []
@@ -328,174 +428,242 @@ async def submit_answer_turn(
         )
 
 
-    engine = AdaptiveInterviewEngine(db)
-    state = interview.state
-    if not state:
-        state = await engine.get_current_state(interview_id)
+    # The question this request was written against, read before it queues for
+    # the lock. If the interview has moved past it by the time the lock is held,
+    # another submission answered it first and this one is a duplicate.
+    entry_q_id = interview.state.current_question_id if interview.state else None
 
-    # 1. Identify which question candidate is answering
-    target_q_id = state.current_question_id if state else None
-    if not target_q_id:
-        asked_ids = [a.question_id for a in interview.answers]
-        q_obj = await engine.question_selector.select_or_generate_question(
-            company_id=interview.company_id,
-            role_id=interview.role_id,
-            topic=state.current_topic if state else "Technical",
-            difficulty=state.difficulty if state else "medium",
-            asked_question_ids=asked_ids,
-            interview_type=interview.interview_type
+    # Serialise every turn of this interview. Everything below reads state,
+    # decides which question is being answered and then writes; overlapping
+    # submissions that interleave there duplicate the turn.
+    async with _interview_turn_lock(interview_id):
+        if _SUPPORTS_ROW_LOCK:
+            await db.execute(select(Interview.id).where(Interview.id == interview_id).with_for_update())
+        # Re-read after acquiring the lock: a submission that queued behind
+        # another one must not act on the state it saw before waiting.
+        await db.refresh(interview)
+        if interview.state is not None:
+            await db.refresh(interview.state)
+        res_ans = await db.execute(
+            select(Answer)
+            .where(Answer.interview_id == interview_id)
+            .order_by(Answer.created_at.desc(), Answer.id.desc())
         )
-        target_q_id = q_obj.id
+        stored_answers = res_ans.scalars().all()
 
-    stmt_q = select(Question).where(Question.id == target_q_id)
-    res_q = await db.execute(stmt_q)
-    question = res_q.scalars().first()
-    if not question:
-        raise HTTPException(status_code=404, detail="Target question for answer evaluation not found.")
+        engine = AdaptiveInterviewEngine(db)
+        state = interview.state
+        if not state:
+            state = await engine.get_current_state(interview_id)
 
-    # Check duplicate answer submission for this question
-    stmt_ans_exists = select(Answer).where(
-        Answer.interview_id == interview_id,
-        Answer.question_id == question.id
-    )
-    res_ans_exists = await db.execute(stmt_ans_exists)
-    if res_ans_exists.scalars().first():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Question already answered."
-        )
+        submitted_text = answer_in.answer_text.strip()
 
-    # 2. Save candidate answer safely before invoking evaluation
-    ans = Answer(
-        interview_id=interview_id,
-        question_id=question.id,
-        candidate_answer_text=answer_in.answer_text.strip(),
-        audio_url=answer_in.audio_url,
-        stt_latency_ms=answer_in.stt_latency_ms or 0
-    )
-    db.add(ans)
-    await db.commit()
-    await db.refresh(ans)
+        # This submission raced another one for the same question and lost: the
+        # interview advanced while it was queued. Without this it would be
+        # scored against whatever question the winner moved on to -- a question
+        # the candidate has not been shown. Clients that send question_id are
+        # matched exactly further down and never reach this.
+        if (
+            answer_in.question_id is None
+            and entry_q_id is not None
+            and state is not None
+            and state.current_question_id != entry_q_id
+        ):
+            raced = next((a for a in stored_answers if a.question_id == entry_q_id), None)
+            if raced is not None:
+                res_prev = await db.execute(select(Evaluation).where(Evaluation.answer_id == raced.id))
+                prev_eval = res_prev.scalars().first()
+                if prev_eval is not None:
+                    return await _replay_turn(db, interview, state, prev_eval)
 
-    # 3. Evaluate Answer with safe fallback to protect persisted answer
-    try:
-        eval_dict = await AnswerEvaluator.evaluate_answer(
-            question_text=question.question_text,
-            expected_concepts=question.expected_concepts or [],
-            candidate_answer=answer_in.answer_text.strip(),
-            topic=question.topic,
-            question_type=question.question_type or "technical"
-        )
-    except Exception:
-        # evaluate_answer() already handles LLM/provider failures with its own
-        # deterministic fallback; anything reaching here failed before that net
-        # was in place. Reuse the same rule-based evaluator rather than storing
-        # an unearned passing score.
+        # 1. Identify which question candidate is answering
+        target_q_id = answer_in.question_id or (state.current_question_id if state else None)
+        if not target_q_id:
+            asked_ids = [a.question_id for a in interview.answers]
+            q_obj = await engine.question_selector.select_or_generate_question(
+                company_id=interview.company_id,
+                role_id=interview.role_id,
+                topic=state.current_topic if state else "Technical",
+                difficulty=state.difficulty if state else "medium",
+                asked_question_ids=asked_ids,
+                interview_type=interview.interview_type
+            )
+            target_q_id = q_obj.id
+
+        stmt_q = select(Question).where(Question.id == target_q_id)
+        res_q = await db.execute(stmt_q)
+        question = res_q.scalars().first()
+        if not question:
+            raise HTTPException(status_code=404, detail="Target question for answer evaluation not found.")
+
+        # This question may already carry an answer: a resubmission, or a turn whose
+        # answer was committed but whose evaluation and state advance never were
+        # (a restart, a dropped connection, a failure inside the engine). The two
+        # cases need opposite handling, so they are told apart by the evaluation.
+        existing_ans = next((a for a in stored_answers if a.question_id == question.id), None)
+        if existing_ans is not None:
+            res_ev = await db.execute(select(Evaluation).where(Evaluation.answer_id == existing_ans.id))
+            existing_eval = res_ev.scalars().first()
+            if existing_eval is not None:
+                # Already scored: hand back that turn's result unchanged. Repeating
+                # it would store a second evaluation and consume a second question.
+                return await _replay_turn(db, interview, state, existing_eval)
+            # Scored nowhere: finish the interrupted turn from the answer already
+            # on record rather than refusing it, which used to strand the
+            # candidate on a question that could never be submitted again.
+            ans = existing_ans
+        else:
+            # 2. Save candidate answer safely before invoking evaluation
+            ans = Answer(
+                interview_id=interview_id,
+                question_id=question.id,
+                candidate_answer_text=submitted_text,
+                audio_url=answer_in.audio_url,
+                stt_latency_ms=answer_in.stt_latency_ms or 0
+            )
+            db.add(ans)
+            await db.commit()
+            await db.refresh(ans)
+
+        # The turn is now anchored to a stored answer; score that text, so a
+        # resumed turn is evaluated on what the candidate actually submitted.
+        answer_text = ans.candidate_answer_text
+
+        # 3. Evaluate Answer with safe fallback to protect persisted answer
         try:
-            eval_dict = AnswerEvaluator._deterministic_fallback_evaluation(
-                safe_answer=sanitize_input(answer_in.answer_text.strip()),
+            eval_dict = await AnswerEvaluator.evaluate_answer(
+                question_text=question.question_text,
                 expected_concepts=question.expected_concepts or [],
+                candidate_answer=answer_text,
                 topic=question.topic,
-                question_type=question.question_type or "technical",
-                question_text=question.question_text
+                question_type=question.question_type or "technical"
             )
         except Exception:
-            # Unrecoverable: the answer is already persisted, but no score can
-            # be justified, so report the failure instead of inventing one.
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Answer saved, but evaluation is temporarily unavailable. Please retry."
-            )
+            # evaluate_answer() already handles LLM/provider failures with its own
+            # deterministic fallback; anything reaching here failed before that net
+            # was in place. Reuse the same rule-based evaluator rather than storing
+            # an unearned passing score.
+            try:
+                eval_dict = AnswerEvaluator._deterministic_fallback_evaluation(
+                    safe_answer=sanitize_input(answer_text),
+                    expected_concepts=question.expected_concepts or [],
+                    topic=question.topic,
+                    question_type=question.question_type or "technical",
+                    question_text=question.question_text
+                )
+            except Exception:
+                # Unrecoverable: the answer is already persisted, but no score can
+                # be justified, so report the failure instead of inventing one.
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Answer saved, but evaluation is temporarily unavailable. Please retry."
+                )
 
-    evaluation = Evaluation(
-        answer_id=ans.id,
-        correctness_score=eval_dict["correctness_score"],
-        relevance_score=eval_dict["relevance_score"],
-        reasoning_score=eval_dict["reasoning_score"],
-        depth_score=eval_dict["depth_score"],
-        communication_score=eval_dict["communication_score"],
-        overall_question_score=eval_dict["overall_question_score"],
-        evidence=eval_dict["evidence"],
-        feedback_text=eval_dict["feedback_text"],
-        confidence_score=eval_dict["confidence_score"],
-        human_review_required=eval_dict["human_review_required"]
-    )
-    db.add(evaluation)
-    await db.commit()
+        evaluation = Evaluation(
+            answer_id=ans.id,
+            correctness_score=eval_dict["correctness_score"],
+            relevance_score=eval_dict["relevance_score"],
+            reasoning_score=eval_dict["reasoning_score"],
+            depth_score=eval_dict["depth_score"],
+            communication_score=eval_dict["communication_score"],
+            overall_question_score=eval_dict["overall_question_score"],
+            evidence=eval_dict["evidence"],
+            feedback_text=eval_dict["feedback_text"],
+            confidence_score=eval_dict["confidence_score"],
+            human_review_required=eval_dict["human_review_required"]
+        )
+        db.add(evaluation)
+        try:
+            await db.commit()
+        except IntegrityError:
+            # evaluations.answer_id is unique: another worker scored this same
+            # answer while this turn was in flight (only reachable across
+            # processes, where the in-process lock does not apply). Its result
+            # stands; replay it rather than raising or scoring twice.
+            await db.rollback()
+            res_ev = await db.execute(select(Evaluation).where(Evaluation.answer_id == ans.id))
+            winner = res_ev.scalars().first()
+            if winner is None:
+                raise
+            await db.refresh(interview)
+            return await _replay_turn(db, interview, state, winner)
 
-    # 4. Adaptive State Machine Progression
-    asked_ids = [a.question_id for a in interview.answers] + [question.id]
-    updated_state, next_question, is_completed = await engine.process_answer_turn(
-        interview=interview,
-        state=state,
-        last_eval_score=eval_dict["overall_question_score"],
-        asked_question_ids=asked_ids,
-        last_eval_dict=eval_dict,
-        last_answer_text=answer_in.answer_text.strip()
-    )
-
-    # If interview finished, trigger automatic report generation and construct polite closing
-    closing_msg = None
-    term_reason = None
-    if is_completed:
-        report_gen = ReportGenerator(db)
-        await report_gen.generate_interview_report(interview_id)
-        term_reason = updated_state.interview_stage or "completed"
-        if updated_state.interview_stage == "early_conclusion":
-            cand_name = None
-            stmt_u = select(User).where(User.id == user_id)
-            res_u = await db.execute(stmt_u)
-            u_obj = res_u.scalars().first()
-            if u_obj:
-                cand_name = u_obj.full_name
-            comp_obj = getattr(interview, "company", None)
-            if not comp_obj and interview.company_id:
-                stmt_c = select(Company).where(Company.id == interview.company_id)
-                res_c = await db.execute(stmt_c)
-                comp_obj = res_c.scalars().first()
-            from app.interview.persona import InterviewPersonaBuilder
-            closing_msg = InterviewPersonaBuilder.get_early_conclusion_statement(
-                company=comp_obj,
-                candidate_name=cand_name
-            )
-        else:
-            closing_msg = "Thank you for completing your interview today. We appreciate your time and participation. Your comprehensive evaluation report is now available."
-
-    next_q_out = None
-    if next_question:
-        next_q_out = QuestionOut(
-            id=next_question.id,
-            topic=next_question.topic,
-            subtopic=next_question.subtopic,
-            difficulty=next_question.difficulty,
-            question_type=next_question.question_type,
-            question_text=next_question.question_text,
-            expected_concepts=next_question.expected_concepts or [],
-            follow_ups=next_question.follow_ups or []
+        # 4. Adaptive State Machine Progression
+        # A resumed turn already has its answer on record, so dedupe: the
+        # engine takes this as the set of questions not to ask again.
+        asked_ids = list(dict.fromkeys([a.question_id for a in interview.answers] + [question.id]))
+        updated_state, next_question, is_completed = await engine.process_answer_turn(
+            interview=interview,
+            state=state,
+            last_eval_score=eval_dict["overall_question_score"],
+            asked_question_ids=asked_ids,
+            last_eval_dict=eval_dict,
+            last_answer_text=answer_text
         )
 
-    state_out = InterviewStateOut(
-        current_topic=updated_state.current_topic,
-        difficulty=updated_state.difficulty,
-        time_remaining_seconds=updated_state.time_remaining_seconds,
-        questions_asked_count=updated_state.questions_asked_count,
-        current_question_id=updated_state.current_question_id,
-        skill_scores=updated_state.skill_scores or {},
-        weak_topics=updated_state.weak_topics or [],
-        strong_topics=updated_state.strong_topics or [],
-        covered_topics=updated_state.covered_topics or [],
-        remaining_topics=updated_state.remaining_topics or [],
-        interview_stage=updated_state.interview_stage
-    )
+        # If interview finished, trigger automatic report generation and construct polite closing
+        closing_msg = None
+        term_reason = None
+        if is_completed:
+            report_gen = ReportGenerator(db)
+            await report_gen.generate_interview_report(interview_id)
+            term_reason = updated_state.interview_stage or "completed"
+            if updated_state.interview_stage == "early_conclusion":
+                cand_name = None
+                stmt_u = select(User).where(User.id == user_id)
+                res_u = await db.execute(stmt_u)
+                u_obj = res_u.scalars().first()
+                if u_obj:
+                    cand_name = u_obj.full_name
+                comp_obj = getattr(interview, "company", None)
+                if not comp_obj and interview.company_id:
+                    stmt_c = select(Company).where(Company.id == interview.company_id)
+                    res_c = await db.execute(stmt_c)
+                    comp_obj = res_c.scalars().first()
+                from app.interview.persona import InterviewPersonaBuilder
+                closing_msg = InterviewPersonaBuilder.get_early_conclusion_statement(
+                    company=comp_obj,
+                    candidate_name=cand_name
+                )
+            else:
+                closing_msg = "Thank you for completing your interview today. We appreciate your time and participation. Your comprehensive evaluation report is now available."
 
-    return AnswerTurnResponse(
-        evaluation=eval_dict,
-        next_question=next_q_out,
-        interview_state=state_out,
-        is_completed=is_completed,
-        closing_message=closing_msg,
-        termination_reason=term_reason
-    )
+        next_q_out = None
+        if next_question:
+            next_q_out = QuestionOut(
+                id=next_question.id,
+                topic=next_question.topic,
+                subtopic=next_question.subtopic,
+                difficulty=next_question.difficulty,
+                question_type=next_question.question_type,
+                question_text=next_question.question_text,
+                expected_concepts=next_question.expected_concepts or [],
+                follow_ups=next_question.follow_ups or []
+            )
+
+        state_out = InterviewStateOut(
+            current_topic=updated_state.current_topic,
+            difficulty=updated_state.difficulty,
+            time_remaining_seconds=updated_state.time_remaining_seconds,
+            questions_asked_count=updated_state.questions_asked_count,
+            current_question_id=updated_state.current_question_id,
+            skill_scores=updated_state.skill_scores or {},
+            weak_topics=updated_state.weak_topics or [],
+            strong_topics=updated_state.strong_topics or [],
+            covered_topics=updated_state.covered_topics or [],
+            remaining_topics=updated_state.remaining_topics or [],
+            interview_stage=updated_state.interview_stage
+        )
+
+        return AnswerTurnResponse(
+            evaluation=eval_dict,
+            interviewer_ack=eval_dict.get("interviewer_ack") or None,
+            next_question=next_q_out,
+            interview_state=state_out,
+            is_completed=is_completed,
+            closing_message=closing_msg,
+            termination_reason=term_reason
+        )
 
 
 @router.post("/{interview_id}/finish")

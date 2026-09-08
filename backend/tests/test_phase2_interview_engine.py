@@ -331,8 +331,18 @@ async def test_11_to_13_answer_persistence_empty_and_duplicate_rejection():
         duplicate_res = await client.post(f"/api/v1/interviews/{int_id}/answer", headers=headers, json={
             "answer_text": "Second attempt to answer the exact same question."
         })
-        assert duplicate_res.status_code == 400
-        assert "already answered" in duplicate_res.json()["detail"].lower()
+        # The turn is replayed, not repeated: the caller gets the score that was
+        # already recorded, and nothing further is written. This used to be a
+        # 400, which also stranded turns whose answer was stored but never
+        # evaluated -- see tests/test_answer_turn_idempotency.py.
+        assert duplicate_res.status_code == 200
+        assert duplicate_res.json()["evaluation"]["overall_question_score"] ==             turn_data1["evaluation"]["overall_question_score"]
+
+        async with AsyncSessionLocal() as db:
+            stmt = select(Answer).where(Answer.interview_id == int_id, Answer.question_id == q1_id)
+            again = (await db.execute(stmt)).scalars().all()
+            assert len(again) == 1, "a repeat submission must not store a second answer"
+            assert again[0].candidate_answer_text == ans1_text
 
 
 @pytest.mark.asyncio

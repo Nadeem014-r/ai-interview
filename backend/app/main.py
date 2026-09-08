@@ -112,6 +112,39 @@ async def on_startup():
             f"PREWARM_VOICE_MODELS={PREWARM_VOICE_MODELS}). Models still load lazily on first use."
         )
 
+    # ── LLM reachability self-check (non-blocking, logs only) ────────────────
+    #
+    # A dead or renamed model returns HTTP 404, RoutedLLMProvider fails over to
+    # MockLLMProvider, and every question and score from then on is canned --
+    # while each request still returns 200. The interview looks like a fixed
+    # questionnaire and nothing in the response says why. This probe surfaces
+    # that at boot instead of mid-demo. It never blocks startup or fails it.
+    async def _check_llm_reachable():
+        try:
+            from app.ai.factory import AIFactory
+            provider = AIFactory.get_llm_provider()
+            await provider.generate_text("ping", max_tokens=8, timeout=20.0)
+            used = getattr(provider, "last_provider_used", None)
+            if used == "mock":
+                reason = getattr(provider, "last_fallback_reason", "unknown error")
+                logger.error(
+                    "LLM SELF-CHECK FAILED: '%s' is unreachable, so interview questions "
+                    "and scores will be CANNED MOCK OUTPUT, not real AI. Reason: %s",
+                    settings.DEFAULT_LLM_PROVIDER, reason,
+                )
+            else:
+                logger.info(
+                    "LLM self-check OK: provider=%s model=%s",
+                    settings.DEFAULT_LLM_PROVIDER, settings.GEMINI_DEFAULT_MODEL,
+                )
+        except Exception as exc:
+            logger.error(
+                "LLM SELF-CHECK FAILED (%s). Interview turns will fall back to "
+                "deterministic/canned output until this is fixed.", exc,
+            )
+
+    asyncio.create_task(_check_llm_reachable())
+
     # ── Background JD scraper (additive — non-blocking) ──────────────────────
     try:
         from app.matching.background_scraper import start_background_scraper

@@ -199,12 +199,19 @@ async def test_voice_07_to_12_turn_processing_persistence_and_multi_turn_state()
             state_obj.current_question_id = answers[0].question_id
             await db.commit()
 
-        # Reject duplicate answer on same question (Requirement 9)
+        # Requirement 9: a duplicate answer for the same question is absorbed,
+        # not stored again -- the caller is replayed the recorded turn.
         dup_res = await client.post(f"/api/v1/interviews/{int_id}/answer", headers=headers, json={
             "answer_text": "Duplicate spoken response."
         })
-        assert dup_res.status_code == 400
-        assert "already answered" in dup_res.json()["detail"].lower()
+        assert dup_res.status_code == 200
+        assert dup_res.json()["evaluation"]["overall_question_score"] ==             turn1_data["evaluation"]["overall_question_score"]
+
+        async with AsyncSessionLocal() as db:
+            stmt = select(Answer).where(Answer.interview_id == int_id)
+            after_dup = (await db.execute(stmt)).scalars().all()
+            assert len(after_dup) == 1, "duplicate submission must not add an answer"
+            assert after_dup[0].candidate_answer_text == spoken_turn1
 
 
 # ==============================================================================

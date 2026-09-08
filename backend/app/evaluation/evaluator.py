@@ -132,6 +132,18 @@ class AnswerEvaluator:
                 fb = f"No response was provided for {topic}."
                 evidence = ["No response provided."]
 
+            # This path never reaches the LLM, so the spoken reaction is fixed
+            # per response state. A real interviewer does not sit in silence
+            # after "I don't know" -- they acknowledge it and move on.
+            if resp_state == "EXPLICIT_UNKNOWN":
+                ack = "That's alright, no problem at all. Let's move on."
+            elif resp_state == "MINIMAL_NON_SUBSTANTIVE":
+                ack = "Okay, could you expand on that a little for me?"
+            elif resp_state == "GIBBERISH":
+                ack = "Sorry, I didn't quite follow that. Let's try another one."
+            else:
+                ack = "I didn't catch a response there. Let's continue."
+
             overall = DeterministicScorer.calculate_question_weighted_score(
                 correctness=0.0,
                 relevance=0.0,
@@ -141,6 +153,7 @@ class AnswerEvaluator:
                 question_type=clean_qtype
             )
             return {
+                "interviewer_ack": ack,
                 "correctness": 0.0,
                 "relevance": 0.0,
                 "reasoning": 0.0,
@@ -205,8 +218,19 @@ SCORE CALIBRATION ANCHORS (0.0 to 10.0 scale):
 - 1.5 - 2.9: Poor / Incorrect (factual misconceptions, wrong mechanisms).
 - 0.0 - 1.4: No demonstrated knowledge / "I don't know" / gibberish / completely irrelevant.
 
+SPOKEN REACTION ("interviewer_ack"):
+Also return one short sentence that a real human interviewer would say OUT LOUD immediately
+after hearing this answer, before moving to the next question. Rules:
+- Maximum 15 words. It is spoken aloud, so it must sound natural, not written.
+- React to THIS specific answer's actual content. Never generic filler.
+- Never state or imply a score, grade, or percentage.
+- No fake praise. If the answer was weak, be neutral and kind ("Okay, let's come at that
+  from another angle."), never sarcastic and never harsh.
+- If the answer was strong, acknowledge the specific thing that was right.
+
 Return strict JSON:
 {{
+    "interviewer_ack": "one short spoken sentence reacting to this answer",
     "correctness": float (0.0 to 10.0),
     "relevance": float (0.0 to 10.0),
     "reasoning": float (0.0 to 10.0),
@@ -295,7 +319,16 @@ Return strict JSON:
                 else:
                     feedback = f"Response did not demonstrate required technical understanding of {topic}."
 
+            # The ack is spoken aloud verbatim, so bound it. An over-long or empty
+            # value is dropped rather than voiced; callers treat absence as
+            # "say nothing extra" and the turn is unaffected.
+            raw_ack = eval_res.get("interviewer_ack")
+            ack = raw_ack.strip() if isinstance(raw_ack, str) else ""
+            if len(ack) > 160 or len(ack) < 2:
+                ack = ""
+
             decision_obj = {
+                "interviewer_ack": ack,
                 "correctness": round(c_score, 1),
                 "relevance": round(rel_score, 1),
                 "reasoning": round(reas_score, 1),

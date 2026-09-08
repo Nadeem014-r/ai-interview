@@ -4,6 +4,7 @@ Integrates with Google Gemini models (Gemini 3.6 Flash, Gemini 1.5 Pro, Text-Emb
 with resilience retries, structured JSON schema validation, token tracking, and embedding safety.
 """
 
+import asyncio
 import time
 import httpx
 from typing import List, Dict, Any, Optional
@@ -20,6 +21,28 @@ from app.ai.json_parser import extract_and_parse_json
 from app.ai.schemas import validate_structured_data
 from app.ai.observability import log_ai_operation
 from app.ai.token_counter import estimate_tokens
+
+
+# A new AsyncClient per request meant a fresh TCP connect and TLS handshake on
+# every LLM call. On an interview turn that cost is paid three times over while
+# the candidate waits in silence, and a slow handshake was enough to push a call
+# past its timeout and into the retry path. Clients are cached per event loop
+# because an httpx client is bound to the loop that created it -- one global
+# client would break under pytest, which runs each test in its own loop.
+_HTTP_CLIENTS: "Dict[Any, httpx.AsyncClient]" = {}
+
+
+def _get_shared_client(timeout: float) -> httpx.AsyncClient:
+    """Return a connection-pooled client for the running event loop."""
+    loop = asyncio.get_running_loop()
+    client = _HTTP_CLIENTS.get(loop)
+    if client is None or client.is_closed:
+        client = httpx.AsyncClient(
+            timeout=timeout,
+            limits=httpx.Limits(max_keepalive_connections=8, max_connections=16),
+        )
+        _HTTP_CLIENTS[loop] = client
+    return client
 
 
 class GeminiLLMProvider(LLMProvider):
@@ -45,15 +68,18 @@ class GeminiLLMProvider(LLMProvider):
         target_model = model or self.default_model
         url = f"{self.base_url}/{target_model}:generateContent"
 
+        # 512 was too small for a full evaluation rubric: the JSON was cut off
+        # mid-object, parsing failed, and the turn silently degraded to canned
+        # output. Reasoning-capable models also bill thought tokens against this
+        # budget, so the ceiling must clear the response by a wide margin.
+        effective_max_tokens = max_tokens or settings.LLM_MAX_OUTPUT_TOKENS or 2048
         payload: Dict[str, Any] = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": max_tokens or 512,
+                "maxOutputTokens": effective_max_tokens,
             }
         }
-        if max_tokens:
-            payload["generationConfig"]["maxOutputTokens"] = max_tokens
         if system_prompt:
             payload["systemInstruction"] = {
                 "parts": [{"text": system_prompt}]
@@ -63,35 +89,36 @@ class GeminiLLMProvider(LLMProvider):
         timeout = kwargs.get("timeout", settings.LLM_REQUEST_TIMEOUT_SECONDS)
 
         async def _call() -> str:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                res = await client.post(
-                    url, json=payload, headers={"x-goog-api-key": self.api_key}
-                )
-                res.raise_for_status()
-                data = res.json()
-                
-                candidates = data.get("candidates")
-                if not candidates or not isinstance(candidates, list) or len(candidates) == 0:
-                    prompt_feedback = data.get("promptFeedback", {})
-                    block_reason = prompt_feedback.get("blockReason", "Unknown block reason")
-                    raise AIInvalidRequestError(f"Gemini API returned no candidates. Block reason: {block_reason}", provider="gemini")
+            client = _get_shared_client(timeout)
+            res = await client.post(
+                url, json=payload, headers={"x-goog-api-key": self.api_key}, timeout=timeout
+            )
+            res.raise_for_status()
+            data = res.json()
 
-                first_candidate = candidates[0]
-                content = first_candidate.get("content")
-                if not content or not isinstance(content, dict):
-                    finish_reason = first_candidate.get("finishReason", "UNKNOWN")
-                    raise AIInvalidRequestError(f"Gemini returned empty content with finishReason: {finish_reason}", provider="gemini")
 
-                parts = content.get("parts")
-                if not parts or not isinstance(parts, list) or len(parts) == 0:
-                    finish_reason = first_candidate.get("finishReason", "UNKNOWN")
-                    raise AIInvalidRequestError(f"Gemini returned empty parts list with finishReason: {finish_reason}", provider="gemini")
+            candidates = data.get("candidates")
+            if not candidates or not isinstance(candidates, list) or len(candidates) == 0:
+                prompt_feedback = data.get("promptFeedback", {})
+                block_reason = prompt_feedback.get("blockReason", "Unknown block reason")
+                raise AIInvalidRequestError(f"Gemini API returned no candidates. Block reason: {block_reason}", provider="gemini")
 
-                text_part = parts[0].get("text")
-                if text_part is None:
-                    raise AIInvalidRequestError(f"Missing text field in Gemini candidate part: {parts[0]}", provider="gemini")
+            first_candidate = candidates[0]
+            content = first_candidate.get("content")
+            if not content or not isinstance(content, dict):
+                finish_reason = first_candidate.get("finishReason", "UNKNOWN")
+                raise AIInvalidRequestError(f"Gemini returned empty content with finishReason: {finish_reason}", provider="gemini")
 
-                return text_part
+            parts = content.get("parts")
+            if not parts or not isinstance(parts, list) or len(parts) == 0:
+                finish_reason = first_candidate.get("finishReason", "UNKNOWN")
+                raise AIInvalidRequestError(f"Gemini returned empty parts list with finishReason: {finish_reason}", provider="gemini")
+
+            text_part = parts[0].get("text")
+            if text_part is None:
+                raise AIInvalidRequestError(f"Missing text field in Gemini candidate part: {parts[0]}", provider="gemini")
+
+            return text_part
 
         try:
             result_text = await execute_with_resilience(_call, provider="gemini", operation_name="generate_text")
@@ -171,19 +198,19 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         }
 
         async def _call() -> List[float]:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                res = await client.post(
-                    url, json=payload, headers={"x-goog-api-key": self.api_key}
-                )
-                res.raise_for_status()
-                data = res.json()
-                try:
-                    values = data["embedding"]["values"]
-                    if not isinstance(values, list) or len(values) == 0:
-                        raise AIEmbeddingError("Empty embedding vector returned from Gemini.", provider="gemini")
-                    return [float(x) for x in values]
-                except (KeyError, TypeError) as e:
-                    raise AIEmbeddingError(f"Malformed embedding response from Gemini: {data}", provider="gemini") from e
+            client = _get_shared_client(15.0)
+            res = await client.post(
+                url, json=payload, headers={"x-goog-api-key": self.api_key}, timeout=15.0
+            )
+            res.raise_for_status()
+            data = res.json()
+            try:
+                values = data["embedding"]["values"]
+                if not isinstance(values, list) or len(values) == 0:
+                    raise AIEmbeddingError("Empty embedding vector returned from Gemini.", provider="gemini")
+                return [float(x) for x in values]
+            except (KeyError, TypeError) as e:
+                raise AIEmbeddingError(f"Malformed embedding response from Gemini: {data}", provider="gemini") from e
 
         return await execute_with_resilience(_call, provider="gemini", operation_name="embed_text")
 
