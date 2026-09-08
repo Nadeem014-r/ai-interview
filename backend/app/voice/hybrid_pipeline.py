@@ -132,7 +132,7 @@ class GeminiStreamingLLM:
         Yield text chunks as they stream from Gemini Flash.
         Uses Server-Sent Events (text/event-stream) from generateContent.
         """
-        url = f"{self.base_url}/{self.model}:streamGenerateContent?key={self.api_key}&alt=sse"
+        url = f"{self.base_url}/{self.model}:streamGenerateContent?alt=sse"
 
         # Build contents from conversation history
         contents = []
@@ -160,7 +160,10 @@ class GeminiStreamingLLM:
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                async with client.stream("POST", url, json=payload) as resp:
+                async with client.stream(
+                    "POST", url, json=payload,
+                    headers={"x-goog-api-key": self.api_key},
+                ) as resp:
                     resp.raise_for_status()
                     async for line in resp.aiter_lines():
                         if line.startswith("data: "):

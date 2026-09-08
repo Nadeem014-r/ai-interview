@@ -1,0 +1,55 @@
+# Build context for docker-compose.yml `backend` (context: ./backend).
+# The root .dockerignore does NOT apply here: Docker reads .dockerignore from
+# the context root, so without this file `COPY . .` in backend/Dockerfile ships
+# backend/.env (live API keys + SECRET_KEY), the 1.5 GB Windows virtualenv and
+# the local SQLite database straight into the image.
+
+# Secrets -- never bake into an image layer
+.env
+.env.*
+!.env.example
+
+# Virtualenvs (host-native binaries; useless and huge inside a Linux image)
+**/venv/
+**/venv_*/
+**/.venv/
+env/
+
+# Python caches and test artefacts
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local databases and runtime storage
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+realtime_storage/
+data/uploads/
+
+# Generated / scratch media and PII scratch data
+**/*.wav
+**/*.mp3
+**/*.webm
+**/*.mp4
+**/*.m4a
+**/*.ogg
+**/*.flac
+actual_user_resume_raw.txt
+
+# Tests and dev-only leftovers are not part of the runtime image
+tests/
+conftest.py
+pytest.ini
+requirements_backup.txt
+
+# Logs
+**/*.log

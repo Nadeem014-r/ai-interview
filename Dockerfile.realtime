@@ -1,17 +1,28 @@
 # Phase 10B: Realtime Production Container Image
-FROM python:3.11-slim
+# Multi-stage: the build toolchain stays in the builder so the runtime image
+# does not carry build-essential (hundreds of MB) that it can never use.
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+FROM python:3.11-slim AS runner
+
+WORKDIR /app
+
+# curl is retained: the container HEALTHCHECK below uses it.
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy backend dependencies
-COPY backend/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
 
 # Copy application source code
 COPY backend/app /app/app
@@ -30,7 +41,7 @@ EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/docs || exit 1
+    CMD curl -f http://localhost:8000/health/liveness || exit 1
 
 # Run Uvicorn ASGI server
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--ws", "websockets"]

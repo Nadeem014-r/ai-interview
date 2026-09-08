@@ -1,28 +1,73 @@
-# Phase 10C: Docker Build Ignore Rules
+# Build context for Dockerfile.production and Dockerfile.realtime (context: .).
+# Docker matches these patterns against paths rooted at the context, so nested
+# paths need an explicit `**/` prefix -- a bare `.env` never matched
+# `backend/.env`, and `venv` never matched `backend/venv_py313_backup`.
+
 .git
 .gitignore
 .dockerignore
-__pycache__
-*.pyc
-*.pyo
-*.pyd
-.pytest_cache
-.coverage
-htmlcov
-dist
-build
-*.egg-info
-venv
-.venv
-env
+
+# Secrets -- must never be sent to the daemon or land in an image layer
 .env
 .env.*
+**/.env
+**/.env.*
+!.env.example
+
+# Virtualenvs (host-native binaries, hundreds of MB)
+**/venv/
+**/venv_*/
+**/.venv/
+**/env/
+
+# Python caches and test artefacts
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.coverage
+**/htmlcov/
+**/*.egg-info
+
+# Node / Next.js build outputs (frontend is Next.js: `.next`, not `dist`)
+**/node_modules/
+frontend/.next/
+frontend/out/
+**/dist/
+**/build/
+**/tsconfig.tsbuildinfo
+
+# Local databases and runtime storage
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.db-journal
+**/*.db-wal
+**/*.db-shm
+**/production_storage/
+**/realtime_storage/
+# User-uploaded resumes (real PII). Root-anchored `data/uploads/` would not
+# match backend/data/uploads/, which holds thousands of uploaded documents.
+**/data/uploads/
+
+# Generated / scratch media and PII scratch data
+**/*.wav
+**/*.mp3
+**/*.webm
+**/*.mp4
+**/*.m4a
+**/*.ogg
+**/*.flac
+backend/actual_user_resume_raw.txt
+
+# Tests and docs are not needed to build a runtime image
+backend/tests/
+**/requirements_backup.txt
+docs/
+*.md
+!README.md
+
+# Logs and OS cruft
+**/*.log
 .DS_Store
-*.log
-backend/.pytest_cache
-backend/venv
-frontend/node_modules
-frontend/dist
-production_storage
-realtime_storage
-test.db

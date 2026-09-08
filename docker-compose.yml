@@ -53,10 +53,13 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      # NEXT_PUBLIC_* is inlined into the client bundle when `next build` runs,
+      # so it must be a build arg -- a runtime `environment:` entry never
+      # reaches the compiled bundle. Point this at the URL the *browser* uses.
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
     container_name: ai_interviewer_frontend
     restart: always
-    environment:
-      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
     ports:
       - "3000:3000"
     depends_on:

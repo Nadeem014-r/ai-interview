@@ -1,0 +1,25 @@
+# Build context for docker-compose.yml `frontend` (context: ./frontend).
+# The root .dockerignore does NOT apply here. Without this file `COPY . .`
+# overwrites the Linux modules installed by `npm ci` with the host's Windows
+# node_modules (next-swc.win32-x64-msvc.node), which cannot load in the
+# node:18-alpine image, and ships ~300 MB of stale .next build cache.
+
+node_modules/
+.next/
+out/
+dist/
+build/
+
+.env
+.env.*
+!.env.example
+
+npm-debug.log*
+yarn-error.log*
+*.log
+
+.git
+.gitignore
+Dockerfile
+.dockerignore
+tsconfig.tsbuildinfo

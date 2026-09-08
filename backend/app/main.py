@@ -34,12 +34,23 @@ except ImportError as _e:
 
 
 
+# Interactive API docs publish the full attack surface (every route, parameter
+# and schema, including the admin endpoints). They stay on outside production
+# and are switched off once ENVIRONMENT=production.
+_docs_enabled = settings.ENVIRONMENT.strip().lower() != "production"
+
+# Local voice models are warmed at startup for demo latency. Deployments that
+# never use voice can set PREWARM_VOICE_MODELS=false to avoid the RAM, CPU and
+# model-download cost entirely; lazy loading still serves any real request.
+PREWARM_VOICE_MODELS = os.getenv("PREWARM_VOICE_MODELS", "true").strip().lower() not in ("0", "false", "no")
+
 app = FastAPI(
     title=settings.APP_NAME,
     version="1.0.0",
     description="University-Ready AI Interviewer Platform API Engine",
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
 # CORS middleware setup. Origins are explicit (never "*") because credentialed
@@ -59,20 +70,47 @@ async def on_startup():
     await init_db()
     logger.info("Database initialized successfully.")
 
-    # Background warm-up of local AI models (Kokoro TTS & Whisper STT)
+    # Background warm-up of local AI models (Kokoro TTS & Whisper STT).
+    #
+    # Only warm a model this deployment actually uses. Both providers load
+    # lazily on first use (KokoroTTSProvider._get_pipeline /
+    # WhisperSmallSTTProvider._get_pipeline), so warming is a latency
+    # optimisation, never a correctness requirement. Warming unconditionally
+    # downloaded Kokoro-82M and Whisper weights from HuggingFace on every boot
+    # of every worker even when an external TTS/STT provider was configured --
+    # paying RAM, CPU, bandwidth and startup time for models never called.
     import asyncio
+
+    def _uses_local(kind: str, local_name: str) -> bool:
+        # Mirrors the resolution order in app/ai/factory.py.
+        configured = (getattr(settings, f"DEFAULT_{kind}_PROVIDER", "") or "").lower().strip()
+        return configured == local_name
+
+    prewarm_tts = PREWARM_VOICE_MODELS and _uses_local("TTS", "kokoro")
+    prewarm_stt = PREWARM_VOICE_MODELS and _uses_local("STT", "whisper")
+
     async def _prewarm_models():
         try:
-            logger.info("Pre-warming Kokoro 0.9.4 TTS and Whisper Small STT models...")
-            from app.providers.kokoro_tts import KokoroTTSProvider
-            from app.providers.whisper_stt import WhisperSmallSTTProvider
-            await asyncio.to_thread(KokoroTTSProvider._get_pipeline)
-            await asyncio.to_thread(WhisperSmallSTTProvider._get_pipeline)
-            logger.info("Neural voice models pre-warmed successfully.")
+            if prewarm_tts:
+                logger.info("Pre-warming Kokoro TTS model (DEFAULT_TTS_PROVIDER=kokoro)...")
+                from app.providers.kokoro_tts import KokoroTTSProvider
+                await asyncio.to_thread(KokoroTTSProvider._get_pipeline)
+            if prewarm_stt:
+                logger.info("Pre-warming Whisper STT model (DEFAULT_STT_PROVIDER=whisper)...")
+                from app.providers.whisper_stt import WhisperSmallSTTProvider
+                await asyncio.to_thread(WhisperSmallSTTProvider._get_pipeline)
+            logger.info("Local voice model pre-warm complete.")
         except Exception as e:
             logger.warning(f"Voice model pre-warming deferred: {e}")
 
-    asyncio.create_task(_prewarm_models())
+    if prewarm_tts or prewarm_stt:
+        asyncio.create_task(_prewarm_models())
+    else:
+        logger.info(
+            "Skipping local voice model pre-warm: no local model is the configured "
+            f"provider (TTS={settings.DEFAULT_TTS_PROVIDER}, STT={settings.DEFAULT_STT_PROVIDER}, "
+            f"PREWARM_VOICE_MODELS={PREWARM_VOICE_MODELS}). Models still load lazily on first use."
+        )
 
     # ── Background JD scraper (additive — non-blocking) ──────────────────────
     try:
@@ -144,7 +182,11 @@ async def readiness_check():
         return JSONResponse(status_code=503, content={"status": "not_ready", "database": "disconnected"})
 
 # Include API v1 Routers
-api_v1 = FastAPI()
+api_v1 = FastAPI(
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+)
 api_v1.include_router(auth_router)
 api_v1.include_router(profile_router)
 api_v1.include_router(resume_router)

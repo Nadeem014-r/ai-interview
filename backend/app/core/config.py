@@ -27,7 +27,11 @@ class SecretKeyConfigurationError(RuntimeError):
 
 class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
-    DEBUG: bool = True
+    # Secure by default. DEBUG drives SQLAlchemy `echo` (app/core/database.py),
+    # which logs every statement *and its bound parameters* -- user emails and
+    # password hashes included. docker-compose.yml sets ENVIRONMENT=production
+    # but not DEBUG, so a True default leaked that data to container logs.
+    DEBUG: bool = False
     APP_NAME: str = "AI Interviewer Platform"
     API_V1_STR: str = "/api/v1"
     # JWT signing secret. Required: must be supplied via the environment (.env or
@@ -38,7 +42,12 @@ class Settings(BaseSettings):
     
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    ALLOWED_HOSTS: List[str] = ["*"]
+    # Comma-separated, like CORS_ORIGINS: pydantic-settings JSON-decodes complex
+    # fields from the environment, so a List[str] here rejected the
+    # comma-separated form used by .env.example and
+    # docker-compose.production.yml (ALLOWED_HOSTS=localhost,127.0.0.1),
+    # failing startup with a SettingsError before the app could serve.
+    ALLOWED_HOSTS: str = "*"
 
     # Browser origins allowed to call this API. Credentialed CORS cannot use
     # "*" (browsers reject that combination), so origins are always listed
@@ -65,6 +74,17 @@ class Settings(BaseSettings):
     GEMINI_DEFAULT_MODEL: str = "gemini-3.6-flash"
     OPENAI_API_KEY: str = ""
     ELEVENLABS_API_KEY: str = ""
+
+    # Declared so the environment can actually configure them. `model_config`
+    # below sets extra="ignore", so an undeclared name set in .env is dropped
+    # silently and every getattr(settings, NAME, default) read falls back to its
+    # default -- meaning a deployment could set DEEPGRAM_API_KEY or
+    # VOICE_PIPELINE_MODE and the app would go on ignoring it. Defaults match the
+    # fallbacks already used at each read site, so unset behaviour is unchanged.
+    ELEVENLABS_VOICE_ID: str = ""      # app/voice/hybrid_pipeline.py
+    DEEPGRAM_API_KEY: str = ""         # app/voice/hybrid_pipeline.py
+    JINA_API_KEY: str = ""             # app/matching/jd_scraper.py
+    VOICE_PIPELINE_MODE: str = "live"  # app/api/v1/voice_live.py
     
     STORAGE_TYPE: str = "local"
     UPLOAD_DIR: str = "./data/uploads"
@@ -125,6 +145,11 @@ class Settings(BaseSettings):
                 "Generate a unique high-entropy secret for this deployment."
             )
         return candidate
+
+    @property
+    def allowed_hosts(self) -> List[str]:
+        """ALLOWED_HOSTS parsed into a host list (["*"] means any host)."""
+        return [h.strip() for h in self.ALLOWED_HOSTS.split(",") if h.strip()]
 
     @property
     def cors_origins(self) -> List[str]:

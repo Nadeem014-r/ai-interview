@@ -10,12 +10,15 @@ Registration: call `start_background_scraper(app, db_factory)` in main.py startu
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 import logging
 from typing import Callable, Optional, Any
 
 logger = logging.getLogger("ai_interviewer.background_scraper")
 
 _scraper_task: Optional[asyncio.Task] = None  # module-level handle for graceful shutdown
+_lock_handle = None  # held for the process lifetime while this worker owns the loop
 
 # Source.source_type values that denote a job description. "official_job_desc"
 # is what app/research/pipeline.py records; "job_desc" is the value documented
@@ -94,6 +97,57 @@ async def _run_scraper_loop(db_factory: Callable, interval_hours: float = 24.0) 
         await asyncio.sleep(interval_seconds)
 
 
+def _scraper_enabled() -> bool:
+    """Whether periodic JD scraping should run at all.
+
+    A demo or offline deployment can set ENABLE_BACKGROUND_SCRAPER=false to skip
+    the recurring outbound HTTP traffic and database writes entirely.
+    """
+    return os.getenv("ENABLE_BACKGROUND_SCRAPER", "true").strip().lower() not in ("0", "false", "no")
+
+
+def _acquire_single_instance_lock() -> bool:
+    """True when this process should own the scrape loop.
+
+    The loop was started from the FastAPI startup event, so every Uvicorn worker
+    ran its own copy: N workers meant N identical scrape cycles, N times the
+    outbound requests and N times the writes for the same rows. An advisory file
+    lock held for the process lifetime keeps exactly one owner per host, and the
+    OS releases it automatically if that process dies.
+
+    Fails open (returns True) where no lock is available, so behaviour is never
+    worse than before.
+    """
+    global _lock_handle
+    try:
+        import fcntl  # POSIX only; Windows development falls through to fail-open
+    except ImportError:
+        return True
+
+    lock_path = os.getenv(
+        "BACKGROUND_SCRAPER_LOCK",
+        os.path.join(tempfile.gettempdir(), "ai_interviewer_jd_scraper.lock"),
+    )
+    try:
+        handle = open(lock_path, "w")
+    except OSError as exc:
+        logger.warning(f"BackgroundScraper: cannot open lock file ({exc}); running unguarded.")
+        return True
+
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return False          # held by another worker -- expected, stay quiet
+    except Exception as exc:  # pragma: no cover - unexpected platform behaviour
+        handle.close()
+        logger.warning(f"BackgroundScraper: lock unavailable ({exc}); running unguarded.")
+        return True
+
+    _lock_handle = handle
+    return True
+
+
 def start_background_scraper(db_factory: Callable, interval_hours: float = 24.0) -> None:
     """
     Start the background JD scraper as an asyncio Task.
@@ -105,6 +159,20 @@ def start_background_scraper(db_factory: Callable, interval_hours: float = 24.0)
         interval_hours: How often to refresh (default: 24h).
     """
     global _scraper_task
+
+    if not _scraper_enabled():
+        logger.info(
+            "BackgroundScraper: disabled via ENABLE_BACKGROUND_SCRAPER; "
+            "no periodic JD scraping will run."
+        )
+        return
+
+    if not _acquire_single_instance_lock():
+        logger.info(
+            "BackgroundScraper: another worker on this host already owns the "
+            "scrape loop; not starting a duplicate."
+        )
+        return
 
     try:
         loop = asyncio.get_event_loop()

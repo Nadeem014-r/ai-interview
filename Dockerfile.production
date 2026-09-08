@@ -46,7 +46,12 @@ EXPOSE 8000
 
 # Container healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/liveness')" || exit 1
 
-# Start production ASGI server with multiple workers
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--ws", "websockets"]
+# Start the production ASGI server.
+# Worker count is deliberately not pinned to 4. Each worker is a separate
+# process with its own copy of the torch/Whisper/Kokoro stack, so 4 workers cost
+# ~4x RAM for a university-scale demo. Uvicorn defaults to 1 worker and honours
+# WEB_CONCURRENCY, so scaling is a deployment decision rather than a baked-in
+# default. Raise WEB_CONCURRENCY only if measured load requires it.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--ws", "websockets"]

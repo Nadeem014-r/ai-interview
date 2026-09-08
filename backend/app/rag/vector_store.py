@@ -175,15 +175,7 @@ class VectorStore:
         # Bound top_k to sensible ceiling
         effective_top_k = min(top_k, 50)
 
-        # 1. Generate query embedding
-        try:
-            raw_query_vector = await self.embedder.embed_text(query.strip())
-        except Exception as emb_err:
-            raise EmbeddingProviderError(f"Query embedding generation failed: {emb_err}") from emb_err
-
-        query_vector = self._validate_embedding(raw_query_vector)
-
-        # 2. Build metadata-filtered query joining Document and Source
+        # 1. Build metadata-filtered query joining Document and Source
         stmt = (
             select(DocumentChunk, Document, Source)
             .join(Document, DocumentChunk.document_id == Document.id)
@@ -205,6 +197,23 @@ class VectorStore:
 
         result = await self.db.execute(stmt)
         rows = result.all()
+
+        # 2. Generate the query embedding -- only once there is something to
+        #    score it against. Embedding first meant every retrieval on a
+        #    deployment with an empty or unmatched corpus (no document has been
+        #    ingested for this company/role) paid a provider embedding call for
+        #    a result that could only ever be empty. Question generation calls
+        #    this on every interview turn, so that was a per-turn charge for
+        #    nothing. When rows exist the behaviour is unchanged.
+        if not rows:
+            return []
+
+        try:
+            raw_query_vector = await self.embedder.embed_text(query.strip())
+        except Exception as emb_err:
+            raise EmbeddingProviderError(f"Query embedding generation failed: {emb_err}") from emb_err
+
+        query_vector = self._validate_embedding(raw_query_vector)
 
         scored_chunks: List[Dict[str, Any]] = []
         for chunk, doc, source in rows:

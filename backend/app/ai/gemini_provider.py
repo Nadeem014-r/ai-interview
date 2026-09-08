@@ -43,7 +43,7 @@ class GeminiLLMProvider(LLMProvider):
             raise AIAuthenticationError("GEMINI_API_KEY is not set or empty.", provider="gemini")
 
         target_model = model or self.default_model
-        url = f"{self.base_url}/{target_model}:generateContent?key={self.api_key}"
+        url = f"{self.base_url}/{target_model}:generateContent"
 
         payload: Dict[str, Any] = {
             "contents": [{"parts": [{"text": prompt}]}],
@@ -64,7 +64,9 @@ class GeminiLLMProvider(LLMProvider):
 
         async def _call() -> str:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                res = await client.post(url, json=payload)
+                res = await client.post(
+                    url, json=payload, headers={"x-goog-api-key": self.api_key}
+                )
                 res.raise_for_status()
                 data = res.json()
                 
@@ -162,7 +164,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             text = ""
 
         target_model = model or self.default_model
-        url = f"{self.base_url}/{target_model}:embedContent?key={self.api_key}"
+        url = f"{self.base_url}/{target_model}:embedContent"
         payload = {
             "model": f"models/{target_model}",
             "content": {"parts": [{"text": text}]}
@@ -170,7 +172,9 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
 
         async def _call() -> List[float]:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                res = await client.post(url, json=payload)
+                res = await client.post(
+                    url, json=payload, headers={"x-goog-api-key": self.api_key}
+                )
                 res.raise_for_status()
                 data = res.json()
                 try:
