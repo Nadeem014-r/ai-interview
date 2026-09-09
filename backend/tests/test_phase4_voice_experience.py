@@ -238,13 +238,14 @@ async def test_voice_15_to_20_completion_reporting_and_isolation():
         # Finish session
         finish_res = await client.post(f"/api/v1/interviews/{int1['id']}/finish", headers=h1)
         assert finish_res.status_code == 200
-        rep_id = finish_res.json()["report_id"]
+        assert finish_res.json()["status"] in ("processing", "ready")
 
-        # Fetch report
+        # Fetch report. Generation is detached from the finish request now, so
+        # the id is read where the candidate reads it.
         rep_res = await client.get(f"/api/v1/reports/{int1['id']}", headers=h1)
         assert rep_res.status_code == 200
         rep_data = rep_res.json()
-        assert rep_data["id"] == rep_id
+        assert rep_data["id"] > 0
         assert 0.0 <= rep_data["overall_score"] <= 100.0
 
         # Candidate 2 cannot access Candidate 1's report or interview

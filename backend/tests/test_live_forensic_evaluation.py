@@ -324,7 +324,19 @@ async def test_live_api_multi_turn_sequence():
                 assert score <= 1.5
                 assert quality == "unknown"
                 assert action == "recover"
-                assert "good" not in eval_res["feedback_text"].lower()
+                # The written feedback is no longer handed to the candidate
+                # mid-interview, so read the persisted evaluation instead: what
+                # matters is that gibberish is never praised in what was stored.
+                from sqlalchemy import select as _select
+                async with AsyncSessionLocal() as _db:
+                    _fb = (await _db.execute(
+                        _select(Evaluation.feedback_text)
+                        .join(Answer, Answer.id == Evaluation.answer_id)
+                        .where(Answer.interview_id == interview.id)
+                        .order_by(Evaluation.id.desc())
+                    )).scalars().first()
+                assert _fb is not None
+                assert "good" not in _fb.lower()
 
             if turn_idx == 4:
                 # TURN 4: "I don't know." MUST score <= 1.5, quality unknown, action recover

@@ -83,10 +83,6 @@ interface VideoInteractionRoomProps {
   difficulty: string;
   questionType: string;
   expectedConcepts?: string[];
-  lastEvaluation?: {
-    overall_question_score: number;
-    feedback_text: string;
-  } | null;
   onAnswerSubmitted: (transcript: string, audioUrl?: string) => Promise<void>;
   submitting: boolean;
   companyName?: string;
@@ -94,6 +90,12 @@ interface VideoInteractionRoomProps {
   isConcluding?: boolean;
   onConclusionFinished?: () => void;
 }
+
+// Transcription and evaluation are two distinct waits with very different
+// causes -- local Whisper decoding first, then two sequential LLM calls on the
+// server. Labelling both "Analyzing your response" described work that had not
+// started yet, so each phase now names itself.
+type ProcessingPhase = "transcribing" | "evaluating";
 
 type RealtimeVoiceState =
   | "idle"
@@ -118,7 +120,6 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
   difficulty,
   questionType,
   expectedConcepts = [],
-  lastEvaluation,
   onAnswerSubmitted,
   submitting,
   companyName = "TechCorp",
@@ -127,11 +128,11 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
   onConclusionFinished
 }) => {
   const [voiceState, setVoiceState] = useState<RealtimeVoiceState>("idle");
+  const [processingPhase, setProcessingPhase] = useState<ProcessingPhase>("transcribing");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [cameraActive, setCameraActive] = useState<boolean>(true);
   const [micActive, setMicActive] = useState<boolean>(true);
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
-  const [spokenTranscript, setSpokenTranscript] = useState<string>("");
   const [candidateAudioLevel, setCandidateAudioLevel] = useState<number>(0);
   const [interviewerAudioLevel, setInterviewerAudioLevel] = useState<number>(0);
   const [frequencyBars, setFrequencyBars] = useState<number[]>([12, 18, 28, 36, 24, 16, 8]);
@@ -876,6 +877,7 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
   // Process captured audio through STT and submit candidate transcript
   const handleAudioCaptured = async (audioBlob: Blob) => {
     try {
+      setProcessingPhase("transcribing");
       setVoiceState("processing");
       const t0 = performance.now();
       const token = getStoredToken();
@@ -909,19 +911,24 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
       const sttData = await sttRes.json();
       const transcript = (sttData.transcript || sttData.text || "").trim();
 
-      if (!transcript || transcript.length < 3) {
+      // Only a genuinely empty transcript is rejected here. The three-character
+      // floor that used to stand in this place threw away real answers: "No",
+      // "10" and "AC" are complete spoken responses to questions that invite
+      // them. The server already rejects silence and hallucination loops with a
+      // 400 handled above, so anything reaching here is speech it stood behind.
+      if (!transcript) {
         setVoiceState("error");
         setErrorMessage("I didn't catch that clearly. Please speak naturally into your microphone and try again.");
         return;
       }
 
-      setSpokenTranscript(transcript);
       const audioUrl = URL.createObjectURL(audioBlob);
 
       const totalTurnMs = Math.round(performance.now() - turnStartTimeRef.current);
       setLatencyMetrics((m) => ({ ...m, totalMs: totalTurnMs }));
 
       // Submit transcript strictly to interview engine
+      setProcessingPhase("evaluating");
       await onAnswerSubmitted(transcript, audioUrl);
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : "Failed to process speech";
@@ -993,10 +1000,14 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                 backgroundColor: "#0c111d",
                 borderRadius: "18px",
                 overflow: "hidden",
-                border: "1px solid #1e293b",
+                border: `1px solid ${voiceState === "ai_speaking" ? "#4f46e5" : "#1e293b"}`,
                 display: "flex",
                 flexDirection: "column",
-                boxShadow: "0 10px 30px rgba(0,0,0,0.25)"
+                boxShadow:
+                  voiceState === "ai_speaking"
+                    ? "0 10px 30px rgba(0,0,0,0.25), 0 0 0 3px rgba(79, 70, 229, 0.18)"
+                    : "0 10px 30px rgba(0,0,0,0.25)",
+                transition: "border-color 0.3s ease, box-shadow 0.3s ease"
               }}
             >
               {/* Female Interviewer Visual */}
@@ -1057,7 +1068,10 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                     backdropFilter: "blur(8px)",
                     padding: "0.4rem 0.85rem",
                     borderRadius: "10px",
-                    border: "1px solid rgba(255, 255, 255, 0.12)"
+                    border: "1px solid rgba(255, 255, 255, 0.12)",
+                    minWidth: 0,
+                    flexShrink: 1,
+                    overflow: "hidden"
                   }}
                 >
                   <div
@@ -1068,18 +1082,27 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                       backgroundColor: voiceState === "ai_speaking" ? "#818cf8" : "#10b981"
                     }}
                   />
-                  <div>
-                    <div style={{ color: "#ffffff", fontSize: "0.85rem", fontWeight: 700, lineHeight: 1.2 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: "#ffffff", fontSize: "0.85rem", fontWeight: 700, lineHeight: 1.2, whiteSpace: "nowrap" }}>
                       AI Technical Interviewer
                     </div>
-                    <div style={{ color: "#94a3b8", fontSize: "0.72rem" }}>
+                    <div
+                      style={{
+                        color: "#94a3b8",
+                        fontSize: "0.72rem",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis"
+                      }}
+                      title={`${companyName} Hiring Lead • ${roleTitle}`}
+                    >
                       {companyName} Hiring Lead • {roleTitle}
                     </div>
                   </div>
                 </div>
 
                 {/* Dynamic State Badge */}
-                <div>
+                <div style={{ flexShrink: 0, marginLeft: "0.5rem" }}>
                   {voiceState === "ai_speaking" && (
                     <span
                       style={{
@@ -1092,10 +1115,26 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                         color: "#ffffff",
                         fontSize: "0.78rem",
                         fontWeight: 700,
+                        whiteSpace: "nowrap",
                         boxShadow: "0 2px 8px rgba(99, 102, 241, 0.5)"
                       }}
                     >
-                      <Volume2 size={14} className="spin" /> Interviewer Speaking...
+                      <span aria-hidden="true" style={{ display: "inline-flex", alignItems: "center", gap: "2px", height: "12px" }}>
+                        {[0, 1, 2, 3].map((i) => (
+                          <span
+                            key={i}
+                            className="wave-bar"
+                            style={{
+                              width: "2.5px",
+                              height: "12px",
+                              borderRadius: "2px",
+                              backgroundColor: "#ffffff",
+                              animationDelay: `${i * 0.13}s`
+                            }}
+                          />
+                        ))}
+                      </span>
+                      Interviewer speaking
                     </span>
                   )}
 
@@ -1113,7 +1152,7 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                         fontWeight: 700
                       }}
                     >
-                      <Zap size={14} /> Interrupted — Listening
+                      <Zap size={14} /> Interrupted — listening
                     </span>
                   )}
 
@@ -1129,6 +1168,7 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                         color: "#ffffff",
                         fontSize: "0.78rem",
                         fontWeight: 700,
+                        whiteSpace: "nowrap",
                         boxShadow: "0 2px 8px rgba(16, 185, 129, 0.4)"
                       }}
                     >
@@ -1142,7 +1182,7 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                           display: "inline-block"
                         }}
                       />
-                      {voiceState === "candidate_speaking" ? "Candidate Speaking..." : "Listening..."}
+                      {voiceState === "candidate_speaking" ? "Recording your answer" : "Listening to your answer"}
                     </span>
                   )}
 
@@ -1160,7 +1200,10 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                         fontWeight: 700
                       }}
                     >
-                      <Loader2 size={14} className="animate-spin" /> Evaluating Answer...
+                      <Loader2 size={14} className="animate-spin" />{" "}
+                      {processingPhase === "transcribing"
+                        ? "Transcribing your answer"
+                        : "Analyzing your response"}
                     </span>
                   )}
 
@@ -1243,10 +1286,16 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                 backgroundColor: "#020617",
                 borderRadius: "18px",
                 overflow: "hidden",
-                border: "1px solid #1e293b",
+                border: `1px solid ${
+                  voiceState === "listening" || voiceState === "candidate_speaking" ? "#10b981" : "#1e293b"
+                }`,
                 display: "flex",
                 flexDirection: "column",
-                boxShadow: "0 10px 30px rgba(0,0,0,0.25)"
+                boxShadow:
+                  voiceState === "listening" || voiceState === "candidate_speaking"
+                    ? "0 10px 30px rgba(0,0,0,0.25), 0 0 0 3px rgba(16, 185, 129, 0.18)"
+                    : "0 10px 30px rgba(0,0,0,0.25)",
+                transition: "border-color 0.3s ease, box-shadow 0.3s ease"
               }}
             >
               {/* Live Webcam Stream */}
@@ -1602,34 +1651,6 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
             </div>
           )}
 
-      {/* Candidate Response Transcript */}
-      {spokenTranscript && (
-        <div
-          className="saas-card"
-          style={{
-            padding: "1.25rem 1.5rem",
-            backgroundColor: "#f8fafc",
-            border: "1px solid #e2e8f0",
-            borderRadius: "14px"
-          }}
-        >
-          <div
-            style={{
-              fontSize: "0.78rem",
-              color: "#059669",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              fontWeight: 700,
-              marginBottom: "0.35rem"
-            }}
-          >
-            You
-          </div>
-          <p style={{ color: "#0f172a", fontSize: "1.05rem", lineHeight: 1.5, margin: 0 }}>
-            &ldquo;{spokenTranscript}&rdquo;
-          </p>
-        </div>
-      )}
     </div>
   );
 };

@@ -88,10 +88,6 @@ interface VoiceInterviewRoomProps {
   difficulty: string;
   questionType: string;
   expectedConcepts?: string[];
-  lastEvaluation?: {
-    overall_question_score: number;
-    feedback_text: string;
-  } | null;
   onAnswerSubmitted: (transcript: string, audioUrl?: string) => Promise<void>;
   submitting: boolean;
   isConcluding?: boolean;
@@ -109,14 +105,23 @@ type RealtimeVoiceState =
   | "audio_blocked"
   | "error";
 
-// Shown in sequence while the answer is being scored and the next question
-// prepared, so a multi-second wait reads as deliberation rather than a hang.
+// A turn has two genuinely distinct waits and they used to share one label.
+// Transcription runs first (local Whisper, measured at 1.2s for a one-word
+// answer and 16.5s for a 37s one), and only then does the answer reach the
+// server, which scores it and generates the next question with two sequential
+// LLM calls. Announcing "Analyzing your response" while the audio has not even
+// been transcribed yet is not true, so each phase now names itself, and the
+// rolling reassurance below applies only to the phase it describes.
+const TRANSCRIBING_LABEL = "Transcribing your answer...";
+
 const PROCESSING_STAGES = [
-  "Listening back to your answer...",
-  "Considering your response...",
+  "Analyzing your response...",
+  "Weighing your reasoning...",
   "Preparing the next question...",
   "Almost there..."
 ];
+
+type ProcessingPhase = "transcribing" | "evaluating";
 
 const VAD_SPEECH_THRESHOLD = 15;
 const VAD_SILENCE_TIMEOUT_MS = 2800;
@@ -132,7 +137,6 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
   difficulty,
   questionType,
   expectedConcepts = [],
-  lastEvaluation,
   onAnswerSubmitted,
   submitting,
   isConcluding = false,
@@ -141,10 +145,10 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
   const [voiceState, setVoiceState] = useState<RealtimeVoiceState>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [audioLevel, setAudioLevel] = useState<number>(0);
-  const [spokenTranscript, setSpokenTranscript] = useState<string>("");
   const [latencyMetrics, setLatencyMetrics] = useState<{ ttsMs?: number; sttMs?: number; totalMs?: number }>({});
   const [activeSubtitleText, setActiveSubtitleText] = useState<string>(currentQuestionText || "");
   const [processingStage, setProcessingStage] = useState<number>(0);
+  const [processingPhase, setProcessingPhase] = useState<ProcessingPhase>("transcribing");
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -709,6 +713,7 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
   // Candidate finishes speaking
   const finishSpeaking = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      setProcessingPhase("transcribing");
       setVoiceState("processing");
       mediaRecorderRef.current.stop();
       if (processorNodeRef.current) {
@@ -726,6 +731,7 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
   // Process captured audio through STT and submit candidate transcript
   const handleAudioCaptured = async (audioBlob: Blob) => {
     try {
+      setProcessingPhase("transcribing");
       setVoiceState("processing");
       const t0 = performance.now();
       const token = getStoredToken();
@@ -759,13 +765,19 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
       const sttData = await sttRes.json();
       const transcript = (sttData.transcript || sttData.text || "").trim();
 
-      if (!transcript || transcript.length < 3) {
+      // Only a genuinely empty transcript is rejected here. The three-character
+      // floor that used to stand in this place threw away real answers: "No",
+      // "10" and "AC" are complete spoken responses to questions that invite
+      // them, and discarding them told the candidate they had not been heard.
+      // The server is already the authority on whether speech was detected --
+      // it rejects silence and hallucination loops with a 400 handled above --
+      // so anything that reaches here is speech it stood behind.
+      if (!transcript) {
         setVoiceState("error");
         setErrorMessage("I didn't catch that clearly. Please speak naturally into your microphone and try again.");
         return;
       }
 
-      setSpokenTranscript(transcript);
       const audioUrl = URL.createObjectURL(audioBlob);
 
       const totalTurnMs = Math.round(performance.now() - turnStartTimeRef.current);
@@ -777,6 +789,7 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
       // errored and nothing will ever arrive".
       questionIdAtSubmitRef.current = currentQuestionId ?? null;
       setProcessingStage(0);
+      setProcessingPhase("evaluating");
       await onAnswerSubmitted(transcript, audioUrl);
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : "Failed to process speech";
@@ -828,12 +841,12 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
   // changes for fifteen seconds reads as a crash; visible progress reads as
   // someone considering an answer.
   useEffect(() => {
-    if (voiceState !== "processing") return;
+    if (voiceState !== "processing" || processingPhase !== "evaluating") return;
     const timer = window.setInterval(() => {
       setProcessingStage((n) => Math.min(n + 1, PROCESSING_STAGES.length - 1));
     }, 3500);
     return () => window.clearInterval(timer);
-  }, [voiceState]);
+  }, [voiceState, processingPhase]);
 
   const handleUnblockAudio = async () => {
     try {
@@ -929,7 +942,22 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
                     fontWeight: 700
                   }}
                 >
-                  <Volume2 size={14} className="spin" /> Interviewer Speaking...
+                  <span aria-hidden="true" style={{ display: "inline-flex", alignItems: "center", gap: "2px", height: "12px" }}>
+                    {[0, 1, 2, 3].map((i) => (
+                      <span
+                        key={i}
+                        className="wave-bar"
+                        style={{
+                          width: "2.5px",
+                          height: "12px",
+                          borderRadius: "2px",
+                          backgroundColor: "#ffffff",
+                          animationDelay: `${i * 0.13}s`
+                        }}
+                      />
+                    ))}
+                  </span>
+                  Interviewer speaking
                 </span>
               )}
 
@@ -957,7 +985,7 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
                       display: "inline-block"
                     }}
                   />
-                  {voiceState === "candidate_speaking" ? "Candidate Speaking..." : "Listening..."}
+                  {voiceState === "candidate_speaking" ? "Recording your answer" : "Listening to your answer"}
                 </span>
               )}
 
@@ -978,6 +1006,8 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
                   <Loader2 size={14} className="animate-spin" />
                   {voiceState === "tts_loading"
                     ? "Interviewer is about to speak..."
+                    : processingPhase === "transcribing"
+                    ? TRANSCRIBING_LABEL
                     : PROCESSING_STAGES[processingStage]}
                 </span>
               )}
@@ -1008,6 +1038,36 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
                       : "radial-gradient(circle, rgba(148,163,184,0.3) 0%, rgba(148,163,184,0) 70%)",
                   transform: `scale(${1 + (audioLevel / 100) * 0.45})`,
                   transition: "transform 0.08s ease-out"
+                }}
+              />
+
+              {/* State ring — a single visual cue for whose turn it is. */}
+              <div
+                aria-hidden="true"
+                className={
+                  voiceState === "ai_speaking" || voiceState === "listening" || voiceState === "candidate_speaking"
+                    ? "state-glow"
+                    : undefined
+                }
+                style={{
+                  position: "absolute",
+                  width: "104px",
+                  height: "104px",
+                  borderRadius: "50%",
+                  border: `1.5px solid ${
+                    voiceState === "ai_speaking"
+                      ? "rgba(129, 140, 248, 0.55)"
+                      : voiceState === "listening" || voiceState === "candidate_speaking"
+                      ? "rgba(52, 211, 153, 0.55)"
+                      : voiceState === "processing" || voiceState === "tts_loading"
+                      ? "rgba(251, 191, 36, 0.5)"
+                      : "rgba(148, 163, 184, 0.3)"
+                  }`,
+                  ["--state-glow-color" as any]:
+                    voiceState === "ai_speaking"
+                      ? "rgba(99, 102, 241, 0.4)"
+                      : "rgba(16, 185, 129, 0.4)",
+                  transition: "border-color 0.3s ease"
                 }}
               />
 
@@ -1281,34 +1341,6 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
             )}
           </div>
 
-      {/* Candidate Response Transcript */}
-      {spokenTranscript && (
-        <div
-          className="saas-card"
-          style={{
-            padding: "1.25rem 1.5rem",
-            backgroundColor: "#f8fafc",
-            border: "1px solid #e2e8f0",
-            borderRadius: "14px"
-          }}
-        >
-          <div
-            style={{
-              fontSize: "0.78rem",
-              color: "#059669",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              fontWeight: 700,
-              marginBottom: "0.35rem"
-            }}
-          >
-            You
-          </div>
-          <p style={{ color: "#0f172a", fontSize: "1.05rem", lineHeight: 1.5, margin: 0 }}>
-            &ldquo;{spokenTranscript}&rdquo;
-          </p>
-        </div>
-      )}
     </div>
   );
 };

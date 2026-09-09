@@ -10,9 +10,27 @@ import { InterviewTimer } from "@/components/InterviewTimer";
 import { AudioRecorder } from "@/components/AudioRecorder";
 import { VideoInteractionRoom } from "@/components/VideoInteractionRoom";
 import { VoiceInterviewRoom } from "@/components/VoiceInterviewRoom";
+import { InterviewCountdown } from "@/components/InterviewCountdown";
+import { MonacoCodingRoom } from "@/components/MonacoCodingRoom";
 import { Send, ChevronDown, ChevronUp, Bot, Sparkles, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 
 type InterviewLifecycle = "LOADING" | "PRE_START" | "ACTIVE" | "CONCLUDING" | "REPORT_GENERATING" | "COMPLETED";
+
+// Standard preparation window before the first question, identical for text,
+// voice and video so every mode gets the same run-up.
+const PRE_START_SECONDS = 30;
+
+// Labels for the stages the adaptive engine actually reports. Anything it sends
+// that is not listed here is shown as-is rather than guessed at.
+const STAGE_LABELS: Record<string, string> = {
+  intro: "Warm-up",
+  core: "Core questions",
+  deep_dive: "Deep dive",
+  adaptive_probe: "Follow-up probe",
+  recovery: "Recalibrating",
+  wrapup: "Wrapping up",
+  early_conclusion: "Concluding"
+};
 
 export default function InterviewInteractionPage() {
   const params = useParams();
@@ -23,7 +41,12 @@ export default function InterviewInteractionPage() {
   const [session, setSession] = useState<InterviewSession | null>(null);
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
   const [answers, setAnswers] = useState<AnswerItem[]>([]);
-  const [lastEvaluation, setLastEvaluation] = useState<{ overall_question_score: number; feedback_text: string } | null>(null);
+  // Deliberately no per-turn evaluation state. A candidate who is shown a score
+  // and a critique after every answer stops having a conversation and starts
+  // managing a grade -- and no real interviewer marks you aloud between
+  // questions. Evaluations are still computed and stored on every turn, because
+  // the adaptive engine steers on them; they are released to the candidate in
+  // the final report, once the session is over.
   const [candidateAnswer, setCandidateAnswer] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showTurnHistory, setShowTurnHistory] = useState(false);
@@ -31,7 +54,9 @@ export default function InterviewInteractionPage() {
   // Spoken reaction to the answer just given, voiced ahead of the next question.
   const [interviewerAck, setInterviewerAck] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
-  const [preStartSeconds, setPreStartSeconds] = useState(10);
+  const [preStartSeconds, setPreStartSeconds] = useState(PRE_START_SECONDS);
+  const [reportId, setReportId] = useState<number | null>(null);
+  const [reportReady, setReportReady] = useState(false);
 
   const lifecycleRef = useRef<InterviewLifecycle>("LOADING");
   const initializedRef = useRef(false);
@@ -50,7 +75,7 @@ export default function InterviewInteractionPage() {
     }
   }, [sessionId]);
 
-  // Pre-start preparation countdown (10s for Text, 30s for Audio/Video)
+  // Pre-start preparation countdown (30s across text, audio and video)
   useEffect(() => {
     if (lifecycle !== "PRE_START") return;
 
@@ -97,13 +122,6 @@ export default function InterviewInteractionPage() {
 
       if (sessData.answers && sessData.answers.length > 0) {
         setAnswers(sessData.answers);
-        const latestAns = sessData.answers[sessData.answers.length - 1];
-        if (latestAns?.evaluation) {
-          setLastEvaluation({
-            overall_question_score: latestAns.evaluation.overall_question_score || latestAns.evaluation.correctness_score || 0,
-            feedback_text: latestAns.evaluation.feedback_text || ""
-          });
-        }
       }
 
       if (sessData.status === "completed") {
@@ -139,9 +157,9 @@ export default function InterviewInteractionPage() {
         }
       }
 
-      // Preparation countdown: 10s for text mode, 30s for audio / video mode
+      // Preparation countdown: uniform 30s for every interview mode
       if (!sessData.answers || sessData.answers.length === 0) {
-        setPreStartSeconds(sessData.mode === "text" ? 10 : 30);
+        setPreStartSeconds(PRE_START_SECONDS);
         updateLifecycle("PRE_START");
       } else {
         updateLifecycle("ACTIVE");
@@ -167,20 +185,54 @@ export default function InterviewInteractionPage() {
     }, 5000);
   };
 
+  // Finalise once, then stop waiting. The report is built on the server after
+  // the response returns, so the candidate is not held on a spinner for work
+  // they do not need to watch, and closing the tab does not cancel it.
   const executeFinishAndNavigate = async () => {
     updateLifecycle("REPORT_GENERATING");
     try {
-      await apiRequest(`/interviews/${sessionId}/finish`, {
+      const res: any = await apiRequest(`/interviews/${sessionId}/finish`, {
         method: "POST"
       });
-      updateLifecycle("COMPLETED");
-      router.push(`/reports/${sessionId}`);
+      if (res?.report_id) {
+        setReportId(res.report_id);
+        setReportReady(true);
+      }
     } catch (err) {
+      // The status poll below recovers from this: finishing is idempotent, and
+      // the interview is already marked complete server-side once it succeeds.
       console.error("Finish interview error:", err);
-      updateLifecycle("COMPLETED");
-      router.push(`/reports/${sessionId}`);
     }
   };
+
+  // Poll for the report at a deliberately unhurried interval. The answer comes
+  // from the stored report row, so it survives a refresh, a new tab or a
+  // different device -- and a candidate who leaves now can open the report
+  // later from their history.
+  useEffect(() => {
+    if (lifecycle !== "REPORT_GENERATING" || reportReady) return;
+
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res: any = await apiRequest(`/interviews/${sessionId}/report-status`);
+        if (cancelled) return;
+        if (res?.status === "ready") {
+          setReportId(res.report_id ?? null);
+          setReportReady(true);
+        }
+      } catch (err) {
+        console.warn("Report status check failed; will retry.", err);
+      }
+    };
+
+    check();
+    const timer = setInterval(check, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [lifecycle, reportReady, sessionId]);
 
   const handleTimerExpired = () => {
     if (lifecycleRef.current !== "ACTIVE") return;
@@ -225,38 +277,25 @@ export default function InterviewInteractionPage() {
           : null
       );
 
-      // 1. Update evaluation feedback
-      let score = 5.0;
-      let feedback = "Answer recorded.";
-      if (response.evaluation) {
-        score = response.evaluation.overall_question_score ?? response.evaluation.correctness_score ?? 5.0;
-        feedback = response.evaluation.feedback_text || "Answer recorded.";
-        setLastEvaluation({
-          overall_question_score: score,
-          feedback_text: feedback
-        });
+      // 1. The turn score drives the local early-conclusion rule below. It is
+      //    read and never stored in state, so it cannot reach the screen.
+      const score: number =
+        response.evaluation?.overall_question_score ??
+        response.evaluation?.correctness_score ??
+        5.0;
 
-        // 2. Add turn to answer history
-        setAnswers((prev) => [
-          ...prev,
-          {
-            id: Date.now(),
-            question_id: currentQuestion.id,
-            question_text: currentQuestion.question_text,
-            candidate_answer_text: textToSubmit,
-            created_at: new Date().toISOString(),
-            evaluation: {
-              overall_question_score: score,
-              feedback_text: feedback,
-              correctness_score: response.evaluation.correctness_score,
-              relevance_score: response.evaluation.relevance_score,
-              reasoning_score: response.evaluation.reasoning_score,
-              depth_score: response.evaluation.depth_score,
-              communication_score: response.evaluation.communication_score
-            }
-          }
-        ]);
-      }
+      // 2. Add the turn to the history the candidate can look back at: the
+      //    question and what they said, with no assessment attached.
+      setAnswers((prev) => [
+        ...prev,
+        {
+          id: Date.now(),
+          question_id: currentQuestion.id,
+          question_text: currentQuestion.question_text,
+          candidate_answer_text: textToSubmit,
+          created_at: new Date().toISOString()
+        }
+      ]);
 
       // 3. Evaluate 3 Consecutive Basic Wrong Answers rule
       const isBasicQuestion =
@@ -344,6 +383,21 @@ export default function InterviewInteractionPage() {
 
   const currentQuestionNumber = answers.length + 1;
   const isConcludingOrGenerating = lifecycle === "CONCLUDING" || lifecycle === "REPORT_GENERATING";
+  const isCodingTurn = currentQuestion?.question_type === "coding";
+  // A coding solution is submitted exactly once. Once an answer exists for this
+  // question the workspace locks: a refresh, a back button or a second click
+  // finds the turn already on record rather than sending it again.
+  const codingSubmitted =
+    !!currentQuestion && answers.some((a) => a.question_id === currentQuestion.id);
+
+  // The interview is adaptive: no total question count is guaranteed by the
+  // backend, so progress is expressed as questions completed so far plus the
+  // stage the engine reports. Never a fixed "X of N".
+  const rawStage = session.state?.interview_stage;
+  const stageLabel = rawStage
+    ? STAGE_LABELS[rawStage] || rawStage.replace(/_/g, " ")
+    : null;
+  const activeTopic = currentQuestion?.topic || session.state?.current_topic || null;
 
   return (
     <WorkspaceLayout
@@ -361,7 +415,8 @@ export default function InterviewInteractionPage() {
             justifyContent: "space-between",
             alignItems: "center",
             flexWrap: "wrap",
-            gap: "0.75rem"
+            gap: "0.75rem",
+            rowGap: "0.5rem"
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
@@ -374,9 +429,9 @@ export default function InterviewInteractionPage() {
             <span className="badge badge-warning" style={{ textTransform: "capitalize" }}>
               Difficulty: {currentQuestion?.difficulty || session.state?.difficulty || "medium"}
             </span>
-            {lifecycle === "ACTIVE" && (
-              <span className="badge badge-neutral">
-                Question {currentQuestionNumber}
+            {lifecycle === "ACTIVE" && stageLabel && (
+              <span className="badge badge-primary" style={{ textTransform: "capitalize" }}>
+                Stage: {stageLabel}
               </span>
             )}
           </div>
@@ -397,6 +452,87 @@ export default function InterviewInteractionPage() {
               </button>
             )}
           </div>
+
+          {/* Adaptive progress: completed turns are known, the total is not. */}
+          {lifecycle === "ACTIVE" && (
+            <div
+              style={{
+                width: "100%",
+                borderTop: "1px solid var(--border-subtle)",
+                paddingTop: "0.7rem",
+                marginTop: "0.15rem",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: "0.6rem"
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "#09090b" }}>
+                  Question {currentQuestionNumber}
+                </span>
+                {activeTopic && (
+                  <span style={{ fontSize: "0.78rem", color: "#71717a" }}>· {activeTopic}</span>
+                )}
+              </div>
+
+              {/* One segment per completed turn, plus the live one. The trailing
+                  fade signals that more questions may follow without promising
+                  a count the engine has not decided yet. */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  flexWrap: "wrap",
+                  justifyContent: "flex-end",
+                  rowGap: "4px",
+                  maxWidth: "100%"
+                }}
+                role="img"
+                aria-label={`${answers.length} question${answers.length === 1 ? "" : "s"} completed, currently on question ${currentQuestionNumber}. The interview is adaptive, so the total is not fixed.`}
+              >
+                {answers.length > 12 ? (
+                  <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "#4f46e5", marginRight: "0.2rem" }}>
+                    {answers.length} answered
+                  </span>
+                ) : (
+                  answers.map((a, idx) => (
+                    <span
+                      key={a.id || idx}
+                      style={{
+                        width: "16px",
+                        height: "5px",
+                        borderRadius: "9999px",
+                        backgroundColor: "#4f46e5",
+                        opacity: 0.55,
+                        transition: "opacity 0.25s ease"
+                      }}
+                    />
+                  ))
+                )}
+                <span
+                  style={{
+                    width: "30px",
+                    height: "5px",
+                    borderRadius: "9999px",
+                    backgroundColor: "#4f46e5",
+                    boxShadow: "0 0 0 3px rgba(79, 70, 229, 0.12)"
+                  }}
+                />
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: "22px",
+                    height: "5px",
+                    borderRadius: "9999px",
+                    background: "linear-gradient(90deg, #d4d4d8 0%, rgba(212, 212, 216, 0) 100%)"
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {errorMessage && (
@@ -418,81 +554,15 @@ export default function InterviewInteractionPage() {
           </div>
         )}
 
-        {/* 10-SECOND PRE-START PREPARATION SCREEN: Displayed exclusively before the first question starts */}
+        {/* PREPARATION SCREEN: uniform 30s run-up before the first question */}
         {lifecycle === "PRE_START" && (
-          <div
-            className="saas-card"
-            style={{
-              padding: "4rem 2rem",
-              textAlign: "center",
-              backgroundColor: "#ffffff",
-              border: "1px solid #e4e4e7",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              minHeight: "360px",
-              gap: "1rem"
-            }}
-          >
-            <div
-              style={{
-                width: "48px",
-                height: "48px",
-                borderRadius: "50%",
-                backgroundColor: "#f4f4f5",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "#09090b"
-              }}
-            >
-              <Bot size={24} />
-            </div>
-
-            <div>
-              <span
-                style={{
-                  fontSize: "0.85rem",
-                  textTransform: "uppercase",
-                  fontWeight: 700,
-                  letterSpacing: "0.05em",
-                  color: "#71717a",
-                  display: "block",
-                  marginBottom: "0.75rem"
-                }}
-              >
-                INTERVIEW STARTING
-              </span>
-
-              <div
-                style={{
-                  fontSize: "4.5rem",
-                  fontWeight: 800,
-                  color: "#09090b",
-                  fontFamily: "monospace",
-                  lineHeight: 1,
-                  margin: "0.5rem 0"
-                }}
-              >
-                {preStartSeconds}
-              </div>
-
-              <p
-                style={{
-                  fontSize: "0.95rem",
-                  color: "#71717a",
-                  fontWeight: 500,
-                  margin: "0.75rem 0 0"
-                }}
-              >
-                {session.mode === "text"
-                  ? "Your interview will begin automatically in 10 seconds. Get ready."
-                  : "Your interview will begin automatically in 30 seconds. Please prepare yourself."}
-              </p>
-            </div>
-          </div>
+          <InterviewCountdown
+            seconds={preStartSeconds}
+            totalSeconds={PRE_START_SECONDS}
+            mode={session.mode}
+            roleTitle={session.role_title}
+            companyName={session.company_name}
+          />
         )}
 
         {/* DEDICATED CONCLUSION SCREEN: Rendered exclusively when CONCLUDING or REPORT_GENERATING */}
@@ -551,26 +621,75 @@ export default function InterviewInteractionPage() {
                 alignItems: "center",
                 gap: "0.5rem",
                 padding: "0.5rem 1rem",
-                backgroundColor: "#f4f4f5",
+                backgroundColor: reportReady ? "var(--accent-emerald-light)" : "#f4f4f5",
                 borderRadius: "8px",
                 fontSize: "0.85rem",
-                color: "#52525b",
+                color: reportReady ? "#065f46" : "#52525b",
                 fontWeight: 500
               }}
+              role="status"
+              aria-live="polite"
             >
-              <Loader2 size={15} className="spin" />
+              {reportReady ? <CheckCircle2 size={15} /> : <Loader2 size={15} className="spin" />}
               <span>
-                {lifecycle === "REPORT_GENERATING"
-                  ? "Generating your performance intelligence report..."
-                  : "Finalizing interview assessment..."}
+                {lifecycle === "CONCLUDING"
+                  ? "Finalizing interview assessment..."
+                  : reportReady
+                  ? "Your detailed report is ready."
+                  : "Your interview is complete. Your detailed report is being prepared."}
               </span>
             </div>
+
+            {lifecycle === "REPORT_GENERATING" && (
+              <>
+                <p style={{ fontSize: "0.85rem", color: "#71717a", maxWidth: "520px", margin: 0, lineHeight: 1.5 }}>
+                  {reportReady
+                    ? "You can open it now, or find it any time under your interview history."
+                    : "Usually ready within a few minutes. You can safely close this page \u2014 your report will be waiting under your interview history."}
+                </p>
+
+                <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", justifyContent: "center" }}>
+                  <button
+                    onClick={() => router.push(`/reports/${sessionId}`)}
+                    disabled={!reportReady}
+                    className="btn btn-primary"
+                    style={{ padding: "0.6rem 1.25rem", fontSize: "0.85rem" }}
+                  >
+                    View Report
+                  </button>
+                  <button
+                    onClick={() => router.push("/history")}
+                    className="btn btn-secondary"
+                    style={{ padding: "0.6rem 1.25rem", fontSize: "0.85rem" }}
+                  >
+                    Back to Interview History
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         ) : lifecycle === "ACTIVE" ? (
           /* ACTIVE INTERVIEW ROOM: Rendered exclusively when ACTIVE */
           <>
+            {/* Coding turns take over the room in every mode: a compilable
+                solution cannot be dictated, so the voice and video interviewers
+                stand down for this one question and resume afterwards. The
+                submission still goes through the same answer endpoint as every
+                other turn, so idempotency and adaptive progression are unchanged. */}
+            {isCodingTurn && currentQuestion && (
+              <MonacoCodingRoom
+                questionText={currentQuestion.question_text}
+                expectedConcepts={currentQuestion.expected_concepts || []}
+                onCodeSubmit={async (submission) => {
+                  await handleSubmitAnswer(submission);
+                }}
+                submitting={submitting}
+                submitted={codingSubmitted}
+              />
+            )}
+
             {/* Video Mode Room */}
-            {session.mode === "video" && (
+            {!isCodingTurn && session.mode === "video" && (
               <div style={{ marginBottom: "1.25rem" }}>
                 <VideoInteractionRoom
                   interviewId={Number(sessionId)}
@@ -579,7 +698,6 @@ export default function InterviewInteractionPage() {
                   difficulty={currentQuestion?.difficulty || session.state?.difficulty || "medium"}
                   questionType={currentQuestion?.question_type || session.interview_type || "technical"}
                   expectedConcepts={currentQuestion?.expected_concepts || []}
-                  lastEvaluation={lastEvaluation}
                   onAnswerSubmitted={async (spoken, audioUrl) => {
                     setCandidateAnswer(spoken);
                     await handleSubmitAnswer(spoken, audioUrl);
@@ -592,7 +710,7 @@ export default function InterviewInteractionPage() {
             )}
 
             {/* Audio Mode Room */}
-            {session.mode === "audio" && (
+            {!isCodingTurn && session.mode === "audio" && (
               <div style={{ marginBottom: "1.25rem" }}>
                 <VoiceInterviewRoom
                   interviewId={Number(sessionId)}
@@ -603,7 +721,6 @@ export default function InterviewInteractionPage() {
                   difficulty={currentQuestion?.difficulty || session.state?.difficulty || "medium"}
                   questionType={currentQuestion?.question_type || session.interview_type || "technical"}
                   expectedConcepts={currentQuestion?.expected_concepts || []}
-                  lastEvaluation={lastEvaluation}
                   onAnswerSubmitted={async (spoken, audioUrl) => {
                     setCandidateAnswer(spoken);
                     await handleSubmitAnswer(spoken, audioUrl);
@@ -613,9 +730,67 @@ export default function InterviewInteractionPage() {
               </div>
             )}
 
+            {/* Text Mode Live State Banner — names the current UI state so the
+                candidate always knows whose turn it is. */}
+            {!isCodingTurn && session.mode === "text" && currentQuestion && (
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.6rem",
+                  padding: "0.6rem 1rem",
+                  marginBottom: "0.85rem",
+                  borderRadius: "10px",
+                  border: `1px solid ${submitting ? "#fde68a" : "#e0e7ff"}`,
+                  backgroundColor: submitting ? "#fffbeb" : "#f5f7ff",
+                  transition: "background-color 0.3s ease, border-color 0.3s ease"
+                }}
+              >
+                <span
+                  className={submitting ? undefined : "state-glow"}
+                  style={{
+                    width: "9px",
+                    height: "9px",
+                    borderRadius: "50%",
+                    flexShrink: 0,
+                    backgroundColor: submitting ? "#d97706" : "#4f46e5",
+                    ["--state-glow-color" as any]: "rgba(79, 70, 229, 0.4)"
+                  }}
+                />
+                <span style={{ fontSize: "0.82rem", fontWeight: 600, color: submitting ? "#92400e" : "#3730a3" }}>
+                  {submitting ? "Analyzing your response" : "Your turn — write your answer"}
+                </span>
+                {submitting && (
+                  <span
+                    className="indeterminate-track"
+                    aria-hidden="true"
+                    style={{
+                      flex: 1,
+                      maxWidth: "160px",
+                      height: "4px",
+                      borderRadius: "9999px",
+                      color: "#d97706",
+                      marginLeft: "auto"
+                    }}
+                  />
+                )}
+              </div>
+            )}
+
             {/* Text Mode Active Question Card with In-Card Timer Header */}
-            {session.mode === "text" && currentQuestion && (
-              <div className="saas-card" style={{ padding: "1.5rem", marginBottom: "1.25rem" }}>
+            {!isCodingTurn && session.mode === "text" && currentQuestion && (
+              <div
+                className="saas-card"
+                style={{
+                  padding: "1.5rem",
+                  marginBottom: "1.25rem",
+                  borderColor: submitting ? "#e4e4e7" : "#dfe3ff",
+                  opacity: submitting ? 0.72 : 1,
+                  transition: "opacity 0.3s ease, border-color 0.3s ease"
+                }}
+              >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem", flexWrap: "wrap", gap: "0.5rem" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
                     <div style={{ backgroundColor: "#09090b", padding: "0.35rem", borderRadius: "6px", color: "#ffffff" }}>
@@ -649,20 +824,8 @@ export default function InterviewInteractionPage() {
               </div>
             )}
 
-            {/* Turn Evaluation Feedback Callout */}
-            {lastEvaluation && (
-              <div style={{ padding: "0.85rem 1rem", backgroundColor: "var(--accent-emerald-light)", border: "1px solid #a7f3d0", borderRadius: "10px", marginBottom: "1.25rem" }}>
-                <span style={{ fontSize: "0.72rem", color: "#059669", textTransform: "uppercase", fontWeight: 700, display: "block", marginBottom: "0.2rem" }}>
-                  Previous Answer Score: {lastEvaluation.overall_question_score} / 10
-                </span>
-                <p style={{ margin: 0, fontSize: "0.85rem", color: "#065f46", lineHeight: 1.4 }}>
-                  {lastEvaluation.feedback_text}
-                </p>
-              </div>
-            )}
-
             {/* Text Mode Response Area */}
-            {session.mode === "text" && currentQuestion && (
+            {!isCodingTurn && session.mode === "text" && currentQuestion && (
               <div className="saas-card" style={{ padding: "1.5rem", marginBottom: "1.25rem" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
                   <label style={{ fontSize: "0.825rem", fontWeight: 600, color: "#52525b" }}>Your Response</label>
@@ -689,9 +852,21 @@ export default function InterviewInteractionPage() {
                     className="btn btn-primary"
                     style={{ padding: "0.6rem 1.25rem", fontSize: "0.85rem" }}
                   >
-                    <Send size={14} /> <span>{submitting ? "Evaluating response..." : "Submit Answer"}</span>
+                    {submitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}{" "}
+                    <span>{submitting ? "Analyzing your response..." : "Submit Answer"}</span>
                   </button>
                 </div>
+
+                {/* Lightweight placeholder for the question still being chosen. */}
+                {submitting && (
+                  <div style={{ marginTop: "1.1rem", paddingTop: "1rem", borderTop: "1px solid var(--border-subtle)" }}>
+                    <div style={{ fontSize: "0.76rem", color: "#71717a", fontWeight: 600, marginBottom: "0.55rem" }}>
+                      Preparing the next question
+                    </div>
+                    <div className="skeleton" style={{ height: "12px", width: "82%", marginBottom: "0.45rem" }} />
+                    <div className="skeleton" style={{ height: "12px", width: "58%" }} />
+                  </div>
+                )}
               </div>
             )}
 
@@ -712,20 +887,12 @@ export default function InterviewInteractionPage() {
                   <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem", marginTop: "1rem" }}>
                     {answers.map((a, idx) => (
                       <div key={a.id || idx} style={{ padding: "0.85rem", backgroundColor: "#fafafa", borderRadius: "8px", border: "1px solid #f4f4f5", fontSize: "0.825rem" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.35rem" }}>
+                        <div style={{ marginBottom: "0.35rem" }}>
                           <strong style={{ color: "#09090b" }}>Q{idx + 1}: {a.question_text}</strong>
-                          {a.evaluation?.overall_question_score !== undefined && (
-                            <span className="badge badge-success">{a.evaluation.overall_question_score} / 10</span>
-                          )}
                         </div>
-                        <p style={{ margin: "0.35rem 0", color: "#52525b" }}>
+                        <p style={{ margin: "0.35rem 0 0", color: "#52525b" }}>
                           <span style={{ fontWeight: 600, color: "#71717a" }}>Answer:</span> {a.candidate_answer_text}
                         </p>
-                        {a.evaluation?.feedback_text && (
-                          <p style={{ margin: 0, color: "#059669", fontSize: "0.78rem" }}>
-                            <span style={{ fontWeight: 600 }}>Feedback:</span> {a.evaluation.feedback_text}
-                          </p>
-                        )}
                       </div>
                     ))}
                   </div>

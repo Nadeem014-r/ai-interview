@@ -18,6 +18,67 @@ from app.providers.exceptions import STTProviderError
 
 logger = logging.getLogger("ai_interviewer.whisper_stt")
 
+# ---------------------------------------------------------------------------
+# Speech-activity gate
+#
+# Whisper does not report "there was nothing to transcribe". Fed a recording
+# that holds only room tone it emits a fluent, confident sentence -- measured
+# here, eight seconds of -48 dBFS noise transcribed as "I'll see you next
+# time." That string is not repetitive, so the silence-hallucination filter in
+# app/voice/stt.py cannot catch it, and it was stored and scored as the
+# candidate's own spoken answer.
+#
+# The previous guard only caught digitally perfect silence (peak < 1e-4), which
+# a real microphone never produces. This one measures energy against the
+# recording's *own* noise floor instead of an absolute loudness, so a quiet
+# speaker is judged the same as a loud one: measured over Kokoro speech
+# attenuated to -30 dBFS, 33-87% of frames still clear the threshold, while
+# room tone clears 0%.
+# ---------------------------------------------------------------------------
+_FRAME_SAMPLES = 512                # 32 ms at 16 kHz
+_SPEECH_FLOOR_MULTIPLE = 3.0        # how far above the clip's own noise floor
+_SPEECH_ABS_FLOOR_RMS = 3e-4        # ~-70 dBFS; below this nothing is audible
+_MIN_SPEECH_MS = 150.0              # shorter than the briefest real word
+_MIN_ANALYSABLE_SECONDS = 0.4       # below this there is no floor to estimate
+
+# Whisper decodes autoregressively up to 448 tokens per 30 s window. On a cough
+# or a door slam it fills that budget with a repetition loop -- 48.3 s of CPU
+# for five seconds of audio, all of it discarded afterwards as silence. Real
+# speech runs about 3-4 tokens per second, so a budget of twelve tokens per
+# second of audio is far above anything a candidate can say while still
+# terminating a loop early: the same cough returns in 3.9 s, and transcripts of
+# real answers up to 37 s long are byte-identical with and without the cap.
+_MAX_TOKENS_PER_AUDIO_SECOND = 12
+_MIN_TOKEN_BUDGET = 40
+_WHISPER_WINDOW_SECONDS = 30        # matches chunk_length_s below
+
+
+def measure_speech_activity_ms(audio_array: np.ndarray, sample_rate: int = 16000) -> Optional[float]:
+    """Milliseconds of audio whose energy rises above the clip's own noise floor.
+
+    Returns None when the clip is too short to estimate a floor from, in which
+    case the caller must not draw any conclusion and should transcribe it.
+    """
+    if audio_array is None or len(audio_array) == 0:
+        return 0.0
+    if len(audio_array) / float(sample_rate) < _MIN_ANALYSABLE_SECONDS:
+        return None
+
+    usable = (len(audio_array) // _FRAME_SAMPLES) * _FRAME_SAMPLES
+    frames = audio_array[:usable].astype(np.float64).reshape(-1, _FRAME_SAMPLES)
+    frame_rms = np.sqrt((frames ** 2).mean(axis=1))
+
+    noise_floor = float(np.percentile(frame_rms, 10))
+    threshold = max(noise_floor * _SPEECH_FLOOR_MULTIPLE, _SPEECH_ABS_FLOOR_RMS)
+    speech_frames = int((frame_rms > threshold).sum())
+    return speech_frames * (_FRAME_SAMPLES / float(sample_rate)) * 1000.0
+
+
+def whisper_token_budget(audio_seconds: float) -> int:
+    """Per-window generation cap that bounds hallucination loops."""
+    window = min(max(audio_seconds, 0.0), _WHISPER_WINDOW_SECONDS)
+    return int(max(_MIN_TOKEN_BUDGET, min(448, _MAX_TOKENS_PER_AUDIO_SECOND * window)))
+
 
 class WhisperSmallSTTProvider(STTProvider):
     """Local Whisper Small STT provider implementing standard STTProvider interface."""
@@ -112,10 +173,16 @@ class WhisperSmallSTTProvider(STTProvider):
             "raw": audio_array,
             "sampling_rate": 16000
         }
-        
+
         result = asr(
             input_data,
-            generate_kwargs={"task": "transcribe", "language": "english"}
+            generate_kwargs={
+                "task": "transcribe",
+                "language": "english",
+                # Bounds a runaway repetition loop on non-speech audio without
+                # truncating any real answer -- see _MAX_TOKENS_PER_AUDIO_SECOND.
+                "max_new_tokens": whisper_token_budget(len(audio_array) / 16000.0),
+            }
         )
         
         raw_text = result.get("text", "") if isinstance(result, dict) else str(result)
@@ -139,15 +206,20 @@ class WhisperSmallSTTProvider(STTProvider):
             # Decode audio array in thread
             audio_array = await asyncio.to_thread(self._decode_audio_to_array, audio_bytes)
             
-            # Check for silent or empty audio
-            if len(audio_array) == 0 or np.max(np.abs(audio_array)) < 1e-4:
+            # Reject audio that holds no speech before Whisper ever sees it.
+            # This is both a correctness guard (Whisper invents a sentence for
+            # pure noise) and the fast path: room tone is rejected in about a
+            # millisecond instead of the 1.7 s a full decode of it costs.
+            speech_ms = measure_speech_activity_ms(audio_array, 16000)
+            if len(audio_array) == 0 or (speech_ms is not None and speech_ms < _MIN_SPEECH_MS):
                 return {
                     "transcript": "",
                     "text": "",
                     "language": "en",
                     "confidence": 0.0,
                     "provider": "whisper_small",
-                    "is_silent": True
+                    "is_silent": True,
+                    "speech_activity_ms": 0.0 if speech_ms is None else round(speech_ms, 1),
                 }
 
             # Run transcription in thread

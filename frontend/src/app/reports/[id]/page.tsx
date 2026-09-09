@@ -12,6 +12,7 @@ export default function ReportDetailPage() {
   const params = useParams();
   const sessionId = params.id;
   const [report, setReport] = useState<any>(null);
+  const [turns, setTurns] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -25,7 +26,24 @@ export default function ReportDetailPage() {
         setLoading(false);
       }
     }
-    if (sessionId) loadReport();
+
+    // The per-question record the candidate could not see during the session.
+    // It is read from the interview they already own -- the evaluations were
+    // computed and stored on each turn, so showing them here costs no provider
+    // call and no re-evaluation. A failure here leaves the summary intact.
+    async function loadTurns() {
+      try {
+        const sess: any = await apiRequest(`/interviews/${sessionId}`);
+        setTurns(Array.isArray(sess?.answers) ? sess.answers : []);
+      } catch (err) {
+        console.warn("Per-question breakdown unavailable:", err);
+      }
+    }
+
+    if (sessionId) {
+      loadReport();
+      loadTurns();
+    }
   }, [sessionId]);
 
   const handlePrint = () => {
@@ -173,6 +191,87 @@ export default function ReportDetailPage() {
               )}
             </div>
           </div>
+
+          {/* Per-question record: every question, what was said, and how it was
+              assessed. Withheld during the session so the interview stayed a
+              conversation; released in full here. */}
+          {turns.length > 0 && (
+            <div className="saas-card" style={{ padding: "1.5rem", marginTop: "1.25rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", marginBottom: "1rem", color: "var(--accent-brand)" }}>
+                <FileText size={18} />
+                <h3 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600, color: "#09090b" }}>
+                  Question-by-Question Review ({turns.length})
+                </h3>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                {turns.map((t: any, idx: number) => {
+                  const ev = t.evaluation;
+                  return (
+                    <div
+                      key={t.id ?? idx}
+                      style={{
+                        padding: "1rem",
+                        backgroundColor: "#fafafa",
+                        border: "1px solid #f4f4f5",
+                        borderRadius: "10px",
+                        fontSize: "0.825rem"
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", marginBottom: "0.5rem", flexWrap: "wrap" }}>
+                        <strong style={{ color: "#09090b", lineHeight: 1.45 }}>
+                          Q{idx + 1}: {t.question_text}
+                        </strong>
+                        {ev?.overall_question_score !== undefined && ev?.overall_question_score !== null && (
+                          <span className="badge badge-neutral" style={{ whiteSpace: "nowrap", height: "fit-content" }}>
+                            {Number(ev.overall_question_score).toFixed(1)} / 10
+                          </span>
+                        )}
+                      </div>
+
+                      <p style={{ margin: "0 0 0.6rem", color: "#52525b", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+                        <span style={{ fontWeight: 600, color: "#71717a" }}>Your answer: </span>
+                        {t.candidate_answer_text}
+                      </p>
+
+                      {ev?.feedback_text && (
+                        <p style={{ margin: "0 0 0.6rem", color: "#065f46", lineHeight: 1.5 }}>
+                          <span style={{ fontWeight: 600 }}>Assessment: </span>
+                          {ev.feedback_text}
+                        </p>
+                      )}
+
+                      {Array.isArray(ev?.evidence) && ev.evidence.length > 0 && (
+                        <ul style={{ margin: "0 0 0.6rem", paddingLeft: "1.1rem", color: "#52525b", display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                          {ev.evidence.map((e: string, i: number) => (
+                            <li key={i} style={{ lineHeight: 1.45 }}>{e}</li>
+                          ))}
+                        </ul>
+                      )}
+
+                      {ev && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+                          {[
+                            ["Correctness", ev.correctness_score],
+                            ["Relevance", ev.relevance_score],
+                            ["Reasoning", ev.reasoning_score],
+                            ["Depth", ev.depth_score],
+                            ["Communication", ev.communication_score]
+                          ]
+                            .filter(([, v]) => v !== undefined && v !== null)
+                            .map(([label, v]) => (
+                              <span key={String(label)} className="badge badge-neutral" style={{ fontSize: "0.72rem" }}>
+                                {label}: {Number(v).toFixed(1)}
+                              </span>
+                            ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </WorkspaceLayout>

@@ -21,6 +21,14 @@ async def transcribe_speech(
         raise HTTPException(status_code=400, detail="Empty audio file provided.")
     try:
         res = await SpeechToTextService.transcribe(audio_bytes, filename=file.filename or "recording.wav")
+        # Sizes and durations only -- never the transcript, which is candidate speech.
+        logger.info(
+            "stt_timing bytes=%d validation_ms=%s stt_ms=%s total_ms=%s",
+            len(audio_bytes),
+            res.get("validation_latency_ms"),
+            res.get("stt_latency_ms"),
+            res.get("latency_ms"),
+        )
         return res
     except Exception as e:
         # Check if it was empty / silent audio or invalid format

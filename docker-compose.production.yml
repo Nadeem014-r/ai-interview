@@ -33,34 +33,16 @@ services:
     networks:
       - internal_net
 
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.production
-    container_name: ai_interviewer_worker_prod
-    restart: unless-stopped
-    command: ["python", "-m", "app._archive.production.lifecycle"]
-    environment:
-      - ENVIRONMENT=production
-      - DEBUG=false
-      # Supplied from the host environment / .env — no insecure fallback.
-      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set (32+ chars, high entropy)}
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-appuser}:${POSTGRES_PASSWORD:-apppassword}@postgres:5432/${POSTGRES_DB:-ai_interviewer}
-      - REDIS_URL=redis://redis:6379/0
-      - USE_REDIS=true
-      - STORAGE_LOCAL_PATH=/app/data/storage
-      - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-5}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-    volumes:
-      - storage_data:/app/data/storage
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - internal_net
+  # No `worker` service.
+  #
+  # There used to be one here running an archived lifecycle module by hand.
+  # That module lives under the app archive directory, has no __main__ entry point and no
+  # runner, so the command imported it and exited 0 immediately -- and with
+  # `restart: unless-stopped` Docker restarted it forever, processing no jobs at
+  # any point. The API container does its own background work in-process (the JD
+  # scraper takes a single-instance lock), so nothing is lost by removing it.
+  #
+  # Redis stays: app/matching/jd_scraper.py uses it as the scrape cache.
 
   postgres:
     image: postgres:15-alpine

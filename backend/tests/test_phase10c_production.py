@@ -346,7 +346,14 @@ def test_docker_compose_production_conformance():
     assert "backend:" in content
     assert "postgres:" in content
     assert "redis:" in content
-    assert "worker:" in content
+
+    # No worker service. The one that used to be here ran
+    # `python -m app._archive.production.lifecycle`, a module with no __main__
+    # entry point: the container exited 0 on start and `restart: unless-stopped`
+    # restarted it forever without ever processing a job. Pinning its absence
+    # stops it being reintroduced.
+    assert "\n  worker:" not in content
+    assert "app._archive" not in content
 
     # Zero hardcoded API keys
     assert "AIzaSy" not in content

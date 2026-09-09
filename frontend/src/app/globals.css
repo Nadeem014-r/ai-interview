@@ -359,3 +359,146 @@ h1, h2, h3, h4, h5, h6 {
 .listening-beacon {
   animation: listeningPing 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
+
+/* ============================================================
+   UI Polish Layer — animation utilities shared by the dashboard
+   and the interview experience. Presentation only.
+   ============================================================ */
+
+/* Tailwind-style alias used by lucide spinners across the rooms. */
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Card entrance: staggered via inline animation-delay. */
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.rise-in {
+  opacity: 0;
+  animation: riseIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Elevation on hover for insight cards. */
+.hover-elevate {
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.22s ease;
+}
+
+.hover-elevate:hover {
+  transform: translateY(-3px);
+  border-color: #e0e7ff !important;
+  box-shadow: 0 12px 28px -8px rgba(79, 70, 229, 0.16), 0 4px 10px -4px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* Calm breathing ring used during interview preparation. */
+@keyframes breathePulse {
+  0%, 100% { transform: scale(1); opacity: 0.5; }
+  50% { transform: scale(1.14); opacity: 0.9; }
+}
+
+.breathe-ring {
+  animation: breathePulse 5s ease-in-out infinite;
+}
+
+@keyframes breatheCore {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+.breathe-core {
+  animation: breatheCore 5s ease-in-out infinite;
+}
+
+/* Final 3-2-1 digit transition. */
+@keyframes countdownPop {
+  0% { opacity: 0; transform: scale(0.72); }
+  45% { opacity: 1; transform: scale(1.04); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.countdown-pop {
+  animation: countdownPop 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Copy swap between countdown phases. */
+@keyframes phaseIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.phase-in {
+  animation: phaseIn 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Live state indicators inside the interview rooms. */
+@keyframes stateGlow {
+  0%, 100% { box-shadow: 0 0 0 0 var(--state-glow-color, rgba(99, 102, 241, 0.45)); }
+  70% { box-shadow: 0 0 0 8px rgba(0, 0, 0, 0); }
+}
+
+.state-glow {
+  animation: stateGlow 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* Lightweight equaliser used for speaking / listening feedback. */
+@keyframes waveBounce {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+
+.wave-bar {
+  transform-origin: center;
+  animation: waveBounce 0.9s ease-in-out infinite;
+}
+
+/* Indeterminate track for "analysing" states — never implies a known total. */
+@keyframes indeterminateSlide {
+  0% { transform: translateX(-60%); }
+  100% { transform: translateX(260%); }
+}
+
+.indeterminate-track {
+  position: relative;
+  overflow: hidden;
+  background: rgba(148, 163, 184, 0.25);
+}
+
+.indeterminate-track::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 38%;
+  border-radius: inherit;
+  background: currentColor;
+  animation: indeterminateSlide 1.4s ease-in-out infinite;
+}
+
+/* Respect reduced-motion preferences across every addition above. */
+@media (prefers-reduced-motion: reduce) {
+  .rise-in,
+  .breathe-ring,
+  .breathe-core,
+  .countdown-pop,
+  .phase-in,
+  .state-glow,
+  .wave-bar,
+  .animate-spin,
+  .spin,
+  .avatar-breathing,
+  .avatar-speaking,
+  .avatar-thinking,
+  .listening-beacon,
+  .indeterminate-track::after {
+    animation: none !important;
+  }
+
+  .rise-in { opacity: 1; }
+
+  .hover-elevate:hover {
+    transform: none;
+  }
+}

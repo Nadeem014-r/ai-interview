@@ -26,6 +26,49 @@ import {
   Plus
 } from "lucide-react";
 
+/**
+ * Eases a number up to its real value once it is known. Purely presentational:
+ * the target always comes from the API, and null stays null.
+ */
+function useCountUp(target: number | null, durationMs = 900): number {
+  const [value, setValue] = useState(0);
+  const frameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (target === null || target === undefined) {
+      setValue(0);
+      return;
+    }
+
+    const prefersReduced =
+      typeof window !== "undefined" &&
+      window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (prefersReduced || target === 0) {
+      setValue(target);
+      return;
+    }
+
+    const start = performance.now();
+    const step = (now: number) => {
+      const progress = Math.min(1, (now - start) / durationMs);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setValue(Math.round(target * eased));
+      if (progress < 1) {
+        frameRef.current = requestAnimationFrame(step);
+      }
+    };
+    frameRef.current = requestAnimationFrame(step);
+
+    return () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    };
+  }, [target, durationMs]);
+
+  return value;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
 
@@ -196,6 +239,7 @@ export default function DashboardPage() {
 
   // Target role title & domain
   const targetRoleTitle = highestMatch?.role_title || candidateProfile?.target_role || "Software Engineer";
+  const hasTargetRole = !!(highestMatch?.role_title || candidateProfile?.target_role);
   const targetDomain = highestMatch?.role_title?.toLowerCase().includes("frontend")
     ? "Frontend"
     : highestMatch?.role_title?.toLowerCase().includes("full")
@@ -242,10 +286,62 @@ export default function DashboardPage() {
 
   const latestTimeAgo = latestCompletedSession?.created_at ? getTimeAgo(latestCompletedSession.created_at) : (history[0]?.created_at ? getTimeAgo(history[0].created_at) : "Recently");
 
+  // Readiness colour band, so the gauge reads at a glance instead of always
+  // being brand indigo regardless of the score.
+  const readinessColor =
+    readinessScore === null
+      ? "#a1a1aa"
+      : readinessScore >= 75
+      ? "#059669"
+      : readinessScore >= 60
+      ? "#4f46e5"
+      : readinessScore > 0
+      ? "#d97706"
+      : "#a1a1aa";
+
+  // Animated presentation of values that are already loaded from the API.
+  const animatedReadiness = useCountUp(loading ? null : readinessScore);
+  const animatedTech = useCountUp(loading ? null : techSkillScore);
+  const animatedProjects = useCountUp(loading ? null : projectsScore);
+  const animatedExp = useCountUp(loading ? null : expScore);
+  const animatedLatestScore = useCountUp(loading ? null : latestExactScore);
+
+  // Top skills actually extracted from the resume, for the Resume Status card.
+  const topSkills = extractedSkills.slice(0, 4);
+
+  // Real progress series: one point per completed interview that has scored
+  // answers, oldest first. No synthetic points are ever added.
+  const scoreTrend: number[] = history
+    .filter((sess) => sess.status === "completed")
+    .map((sess) => {
+      const scored = (sess.answers || []).filter(
+        (a: any) => a?.evaluation?.overall_question_score != null
+      );
+      if (scored.length === 0) return null;
+      const avg =
+        scored.reduce((acc: number, a: any) => acc + a.evaluation.overall_question_score, 0) /
+        scored.length;
+      // Per-question scores are out of 10; present on the same 0-100 scale as
+      // the rest of the dashboard.
+      return Math.round(avg * 10);
+    })
+    .filter((v): v is number => v !== null)
+    .reverse();
+
+  // Real companies already loaded for this candidate, used instead of a fixed
+  // set of logos.
+  const targetCompanies = (matches.length > 0
+    ? matches.slice(0, 3).map((m) => m.company_name)
+    : companies.slice(0, 3).map((c) => c.name)
+  ).filter(Boolean);
+
   // SVG Circular Gauge calculation
   const gaugeRadius = 52;
   const circumference = 2 * Math.PI * gaugeRadius;
-  const strokeDashoffset = readinessScore !== null ? circumference - (readinessScore / 100) * circumference : circumference;
+  const strokeDashoffset =
+    readinessScore !== null
+      ? circumference - (animatedReadiness / 100) * circumference
+      : circumference;
 
   return (
     <WorkspaceLayout hideHeader={true} contentMaxWidth="1200px">
@@ -416,6 +512,7 @@ export default function DashboardPage() {
 
         {/* Main AI Interview Hero Card */}
         <div
+          className="hover-elevate rise-in"
           style={{
             backgroundColor: "#ffffff",
             border: "1px solid #f1f1f4",
@@ -664,7 +761,7 @@ export default function DashboardPage() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(218px, 1fr))",
             gap: "1.15rem",
             marginBottom: "1.75rem",
             position: "relative",
@@ -673,6 +770,7 @@ export default function DashboardPage() {
         >
           {/* Card 1: Interview Readiness (Derived from Resume & Profile Match) */}
           <div
+            className="hover-elevate rise-in"
             style={{
               backgroundColor: "#ffffff",
               border: "1px solid #f1f1f4",
@@ -682,7 +780,8 @@ export default function DashboardPage() {
               display: "flex",
               flexDirection: "column",
               justifyContent: "space-between",
-              minHeight: "330px"
+              minHeight: "330px",
+              animationDelay: "0ms"
             }}
           >
             <div>
@@ -703,7 +802,7 @@ export default function DashboardPage() {
                       cx="60"
                       cy="60"
                       r={gaugeRadius}
-                      stroke="#ede9fe"
+                      stroke="#f1f0fb"
                       strokeWidth="9"
                       fill="none"
                     />
@@ -712,21 +811,21 @@ export default function DashboardPage() {
                       cx="60"
                       cy="60"
                       r={gaugeRadius}
-                      stroke="#6366f1"
+                      stroke={readinessColor}
                       strokeWidth="9"
                       strokeDasharray={circumference}
                       strokeDashoffset={strokeDashoffset}
                       strokeLinecap="round"
                       fill="none"
-                      style={{ transition: "stroke-dashoffset 0.8s ease-in-out" }}
+                      style={{ transition: "stroke 0.5s ease" }}
                     />
                   </svg>
                   {/* Gauge Center Text */}
                   <div style={{ position: "absolute", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
                     <span style={{ fontSize: "1.65rem", fontWeight: 800, color: "#09090b", lineHeight: 1, letterSpacing: "-0.03em" }}>
-                      {readinessScore !== null ? `${readinessScore}%` : "—"}
+                      {readinessScore !== null ? `${animatedReadiness}%` : "—"}
                     </span>
-                    <span style={{ fontSize: "0.78rem", fontWeight: 600, color: "#6366f1", marginTop: "3px" }}>
+                    <span style={{ fontSize: "0.78rem", fontWeight: 600, color: readinessColor, marginTop: "3px" }}>
                       {readinessLabel}
                     </span>
                   </div>
@@ -734,34 +833,77 @@ export default function DashboardPage() {
               </div>
 
               {/* Breakdown Bars (Derived from Resume Job Match Breakdown) */}
+              {highestMatch ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", marginBottom: "0.5rem" }}>
                 {/* Technical Skills */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "0.75rem" }}>
                   <span style={{ color: "#71717a", width: "85px" }}>Technical Skills</span>
                   <div style={{ flex: 1, height: "5px", backgroundColor: "#f3f4f6", borderRadius: "10px", margin: "0 0.5rem", overflow: "hidden" }}>
-                    <div style={{ width: `${techSkillScore}%`, height: "100%", backgroundColor: "#6366f1", borderRadius: "10px" }} />
+                    <div
+                      style={{
+                        width: `${animatedTech}%`,
+                        height: "100%",
+                        backgroundColor: readinessColor,
+                        borderRadius: "10px",
+                        transition: "background-color 0.5s ease"
+                      }}
+                    />
                   </div>
-                  <span style={{ fontWeight: 600, color: "#09090b", width: "28px", textAlign: "right" }}>{techSkillScore}%</span>
+                  <span style={{ fontWeight: 600, color: "#09090b", width: "28px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{animatedTech}%</span>
                 </div>
 
                 {/* Projects & Domain */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "0.75rem" }}>
                   <span style={{ color: "#71717a", width: "85px" }}>Projects</span>
                   <div style={{ flex: 1, height: "5px", backgroundColor: "#f3f4f6", borderRadius: "10px", margin: "0 0.5rem", overflow: "hidden" }}>
-                    <div style={{ width: `${projectsScore}%`, height: "100%", backgroundColor: "#6366f1", borderRadius: "10px" }} />
+                    <div
+                      style={{
+                        width: `${animatedProjects}%`,
+                        height: "100%",
+                        backgroundColor: readinessColor,
+                        borderRadius: "10px",
+                        transition: "background-color 0.5s ease"
+                      }}
+                    />
                   </div>
-                  <span style={{ fontWeight: 600, color: "#09090b", width: "28px", textAlign: "right" }}>{projectsScore}%</span>
+                  <span style={{ fontWeight: 600, color: "#09090b", width: "28px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{animatedProjects}%</span>
                 </div>
 
                 {/* Experience Match */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "0.75rem" }}>
                   <span style={{ color: "#71717a", width: "85px" }}>Experience</span>
                   <div style={{ flex: 1, height: "5px", backgroundColor: "#f3f4f6", borderRadius: "10px", margin: "0 0.5rem", overflow: "hidden" }}>
-                    <div style={{ width: `${expScore}%`, height: "100%", backgroundColor: "#6366f1", borderRadius: "10px" }} />
+                    <div
+                      style={{
+                        width: `${animatedExp}%`,
+                        height: "100%",
+                        backgroundColor: readinessColor,
+                        borderRadius: "10px",
+                        transition: "background-color 0.5s ease"
+                      }}
+                    />
                   </div>
-                  <span style={{ fontWeight: 600, color: "#09090b", width: "28px", textAlign: "right" }}>{expScore}%</span>
+                  <span style={{ fontWeight: 600, color: "#09090b", width: "28px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{animatedExp}%</span>
                 </div>
               </div>
+              ) : (
+                <div
+                  style={{
+                    padding: "0.85rem 0.9rem",
+                    borderRadius: "12px",
+                    backgroundColor: "#fafafa",
+                    border: "1px dashed #e4e4e7",
+                    fontSize: "0.78rem",
+                    color: "#71717a",
+                    lineHeight: 1.5,
+                    textAlign: "center"
+                  }}
+                >
+                  {hasResume
+                    ? "No role match analysis yet — pick a target role to see your skills, projects and experience breakdown."
+                    : "Upload your resume to unlock your readiness breakdown."}
+                </div>
+              )}
             </div>
 
             {/* Bottom Action Link */}
@@ -786,6 +928,7 @@ export default function DashboardPage() {
 
           {/* Card 2: Resume Status */}
           <div
+            className="hover-elevate rise-in"
             style={{
               backgroundColor: "#ffffff",
               border: "1px solid #f1f1f4",
@@ -795,7 +938,8 @@ export default function DashboardPage() {
               display: "flex",
               flexDirection: "column",
               justifyContent: "space-between",
-              minHeight: "330px"
+              minHeight: "330px",
+              animationDelay: "70ms"
             }}
           >
             <div>
@@ -849,12 +993,51 @@ export default function DashboardPage() {
                   <span>{hasResume ? "Ready" : "Pending"}</span>
                 </div>
 
-                <div style={{ fontSize: "0.8rem", color: "#71717a", marginBottom: "0.25rem" }}>
+                <div style={{ fontSize: "0.8rem", color: "#71717a", marginBottom: "0.55rem" }}>
                   {hasResume ? `${extractedSkills.length || 0} skills detected` : "Upload resume to extract skills"}
                 </div>
 
-                <div style={{ fontSize: "0.78rem", fontWeight: 500, color: "#09090b" }}>
-                  {targetRoleTitle} • {targetDomain}
+                {topSkills.length > 0 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: "0.3rem",
+                      justifyContent: "center",
+                      marginBottom: "0.6rem"
+                    }}
+                  >
+                    {topSkills.map((skill: string) => (
+                      <span
+                        key={skill}
+                        style={{
+                          fontSize: "0.7rem",
+                          fontWeight: 600,
+                          color: "#1d4ed8",
+                          backgroundColor: "#eff6ff",
+                          border: "1px solid #dbeafe",
+                          borderRadius: "9999px",
+                          padding: "0.15rem 0.5rem",
+                          maxWidth: "110px",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap"
+                        }}
+                        title={skill}
+                      >
+                        {skill}
+                      </span>
+                    ))}
+                    {extractedSkills.length > topSkills.length && (
+                      <span style={{ fontSize: "0.7rem", fontWeight: 600, color: "#71717a", padding: "0.15rem 0.3rem" }}>
+                        +{extractedSkills.length - topSkills.length}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                <div style={{ fontSize: "0.78rem", fontWeight: 500, color: hasTargetRole ? "#09090b" : "#a1a1aa" }}>
+                  {hasTargetRole ? `${targetRoleTitle} • ${targetDomain}` : "No target role set yet"}
                 </div>
               </div>
             </div>
@@ -881,6 +1064,7 @@ export default function DashboardPage() {
 
           {/* Card 3: Your Target */}
           <div
+            className="hover-elevate rise-in"
             style={{
               backgroundColor: "#ffffff",
               border: "1px solid #f1f1f4",
@@ -890,7 +1074,8 @@ export default function DashboardPage() {
               display: "flex",
               flexDirection: "column",
               justifyContent: "space-between",
-              minHeight: "330px"
+              minHeight: "330px",
+              animationDelay: "140ms"
             }}
           >
             <div>
@@ -926,92 +1111,94 @@ export default function DashboardPage() {
                   </svg>
                 </div>
 
-                <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#09090b", marginBottom: "0.2rem" }}>
-                  {targetRoleTitle}
+                <div
+                  style={{
+                    fontSize: "0.95rem",
+                    fontWeight: 700,
+                    color: hasTargetRole ? "#09090b" : "#a1a1aa",
+                    marginBottom: "0.2rem"
+                  }}
+                >
+                  {hasTargetRole ? targetRoleTitle : "No target role set yet"}
                 </div>
 
                 <div style={{ fontSize: "0.8rem", color: "#71717a", marginBottom: "0.85rem" }}>
-                  {targetDomain}
+                  {hasTargetRole ? targetDomain : "Add one in your profile or upload a resume"}
                 </div>
 
-                {/* Company Badges Row */}
-                <div style={{ display: "flex", alignItems: "center", gap: "0.55rem" }}>
-                  {/* Google */}
+                {/* Match strength for this role, straight from the job-match API */}
+                {highestMatch && (
                   <div
                     style={{
-                      width: "28px",
-                      height: "28px",
-                      borderRadius: "7px",
-                      backgroundColor: "#ffffff",
-                      border: "1px solid #e4e4e7",
-                      display: "flex",
+                      display: "inline-flex",
                       alignItems: "center",
-                      justifyContent: "center",
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.04)"
+                      gap: "0.35rem",
+                      backgroundColor: "#ecfdf5",
+                      border: "1px solid #a7f3d0",
+                      color: "#047857",
+                      padding: "0.2rem 0.6rem",
+                      borderRadius: "9999px",
+                      fontSize: "0.72rem",
+                      fontWeight: 700,
+                      marginBottom: "0.7rem"
                     }}
-                    title="Google"
                   >
-                    <svg width="15" height="15" viewBox="0 0 24 24">
-                      <path
-                        fill="#4285F4"
-                        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
-                      />
-                      <path
-                        fill="#34A853"
-                        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
-                      />
-                      <path
-                        fill="#FBBC05"
-                        d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
-                      />
-                      <path
-                        fill="#EA4335"
-                        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
-                      />
-                    </svg>
+                    <Target size={11} strokeWidth={2.6} />
+                    <span>{Math.round(highestMatch.overall_score)}% role match</span>
                   </div>
+                )}
 
-                  {/* Amazon */}
-                  <div
-                    style={{
-                      width: "28px",
-                      height: "28px",
-                      borderRadius: "7px",
-                      backgroundColor: "#ffffff",
-                      border: "1px solid #e4e4e7",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.04)"
-                    }}
-                    title="Amazon"
-                  >
-                    <span style={{ fontSize: "0.9rem", fontWeight: 800, color: "#111827", fontFamily: "sans-serif" }}>a</span>
+                {/* Companies this candidate actually has roles matched against */}
+                {targetCompanies.length > 0 ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0.35rem" }}>
+                    {targetCompanies.map((name) => (
+                      <span
+                        key={name}
+                        title={name}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "0.3rem",
+                          backgroundColor: "#ffffff",
+                          border: "1px solid #e4e4e7",
+                          borderRadius: "8px",
+                          padding: "0.22rem 0.5rem",
+                          fontSize: "0.72rem",
+                          fontWeight: 600,
+                          color: "#3f3f46",
+                          boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                          maxWidth: "120px",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap"
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: "16px",
+                            height: "16px",
+                            borderRadius: "5px",
+                            backgroundColor: "#ecfdf5",
+                            color: "#059669",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: "0.62rem",
+                            fontWeight: 800,
+                            flexShrink: 0
+                          }}
+                        >
+                          {name.charAt(0).toUpperCase()}
+                        </span>
+                        {name}
+                      </span>
+                    ))}
                   </div>
-
-                  {/* Microsoft */}
-                  <div
-                    style={{
-                      width: "28px",
-                      height: "28px",
-                      borderRadius: "7px",
-                      backgroundColor: "#ffffff",
-                      border: "1px solid #e4e4e7",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.04)"
-                    }}
-                    title="Microsoft"
-                  >
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 6px)", gap: "1.5px" }}>
-                      <div style={{ width: "6px", height: "6px", backgroundColor: "#f25022" }} />
-                      <div style={{ width: "6px", height: "6px", backgroundColor: "#7fba00" }} />
-                      <div style={{ width: "6px", height: "6px", backgroundColor: "#00a4ef" }} />
-                      <div style={{ width: "6px", height: "6px", backgroundColor: "#ffb900" }} />
-                    </div>
+                ) : (
+                  <div style={{ fontSize: "0.75rem", color: "#a1a1aa" }}>
+                    No matched companies yet
                   </div>
-                </div>
+                )}
               </div>
             </div>
 
@@ -1037,6 +1224,7 @@ export default function DashboardPage() {
 
           {/* Card 4: Latest Interview (FIX #2: Actual Most Recent Completed Interview Score) */}
           <div
+            className="hover-elevate rise-in"
             style={{
               backgroundColor: "#ffffff",
               border: "1px solid #f1f1f4",
@@ -1046,7 +1234,8 @@ export default function DashboardPage() {
               display: "flex",
               flexDirection: "column",
               justifyContent: "space-between",
-              minHeight: "330px"
+              minHeight: "330px",
+              animationDelay: "210ms"
             }}
           >
             <div>
@@ -1091,19 +1280,23 @@ export default function DashboardPage() {
                     display: "inline-flex",
                     alignItems: "center",
                     gap: "0.3rem",
-                    backgroundColor: "#ede9fe",
-                    color: "#6366f1",
+                    backgroundColor:
+                      latestExactScore === null ? "#ede9fe" : latestExactScore >= 70 ? "#ecfdf5" : latestExactScore >= 50 ? "#eef2ff" : "#fffbeb",
+                    color:
+                      latestExactScore === null ? "#6366f1" : latestExactScore >= 70 ? "#047857" : latestExactScore >= 50 ? "#4f46e5" : "#b45309",
                     padding: "0.22rem 0.65rem",
                     borderRadius: "20px",
                     fontSize: "0.75rem",
                     fontWeight: 700,
-                    marginBottom: "0.45rem"
+                    marginBottom: "0.45rem",
+                    fontVariantNumeric: "tabular-nums",
+                    transition: "background-color 0.4s ease, color 0.4s ease"
                   }}
                 >
                   {hasCompletedInterview && latestExactScore !== null ? (
                     <>
                       <CheckCircle2 size={12} strokeWidth={2.5} />
-                      <span>{latestExactScore}/100</span>
+                      <span>{animatedLatestScore}/100</span>
                     </>
                   ) : hasCompletedInterview ? (
                     <span>Completed</span>
@@ -1111,6 +1304,46 @@ export default function DashboardPage() {
                     <span>Pending Practice</span>
                   )}
                 </div>
+
+                {/* Score bar — only drawn when a real score exists */}
+                {hasCompletedInterview && latestExactScore !== null && (
+                  <div
+                    style={{
+                      width: "88px",
+                      height: "5px",
+                      borderRadius: "9999px",
+                      backgroundColor: "#f1f0fb",
+                      overflow: "hidden",
+                      marginBottom: "0.5rem"
+                    }}
+                    aria-hidden="true"
+                  >
+                    <div
+                      style={{
+                        width: `${animatedLatestScore}%`,
+                        height: "100%",
+                        borderRadius: "9999px",
+                        backgroundColor:
+                          latestExactScore >= 70 ? "#059669" : latestExactScore >= 50 ? "#4f46e5" : "#d97706"
+                      }}
+                    />
+                  </div>
+                )}
+
+                {hasCompletedInterview && latestCompletedSession?.mode && (
+                  <div
+                    style={{
+                      fontSize: "0.7rem",
+                      fontWeight: 600,
+                      color: "#a1a1aa",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.05em",
+                      marginBottom: "0.35rem"
+                    }}
+                  >
+                    {latestCompletedSession.mode} interview
+                  </div>
+                )}
 
                 {/* Time Ago */}
                 <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem", color: "#71717a" }}>
@@ -1164,7 +1397,9 @@ export default function DashboardPage() {
 
         {/* Bottom Motivation / Progress Card */}
         <div
+          className="hover-elevate rise-in"
           style={{
+            animationDelay: "300ms",
             backgroundColor: "#ffffff",
             border: "1px solid #f1f1f4",
             borderRadius: "18px",
@@ -1205,37 +1440,136 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Right Side: Smooth Growth Spline Curve Graph */}
-          <div style={{ width: "260px", height: "55px", position: "relative" }} className="feature-graphic-desktop">
-            <svg width="100%" height="100%" viewBox="0 0 260 55" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#6366f1" stopOpacity="0.25" />
-                  <stop offset="100%" stopColor="#6366f1" stopOpacity="0" />
-                </linearGradient>
-              </defs>
-              {/* Area Fill */}
-              <path
-                d="M 10,48 Q 50,45 80,42 T 140,32 T 190,20 T 245,8 L 245,55 L 10,55 Z"
-                fill="url(#chartGradient)"
-              />
-              {/* Trend Line */}
-              <path
-                d="M 10,48 Q 50,45 80,42 T 140,32 T 190,20 T 245,8"
-                stroke="#6366f1"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                fill="none"
-              />
-              {/* Nodes */}
-              <circle cx="80" cy="42" r="3" fill="#ffffff" stroke="#6366f1" strokeWidth="2" />
-              <circle cx="140" cy="32" r="3" fill="#ffffff" stroke="#6366f1" strokeWidth="2" />
-              <circle cx="190" cy="20" r="3" fill="#ffffff" stroke="#6366f1" strokeWidth="2" />
-              <circle cx="245" cy="8" r="4" fill="#6366f1" stroke="#ffffff" strokeWidth="2" />
-            </svg>
+          {/* Right Side: real score trend across completed interviews. Rendered
+              only when at least two scored interviews exist — no invented curve. */}
+          <div style={{ width: "260px", height: "58px", position: "relative" }} className="feature-graphic-desktop">
+            {scoreTrend.length >= 2 ? (
+              <>
+                <svg width="100%" height="46" viewBox="0 0 260 46" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label={`Average score across your last ${scoreTrend.length} completed interviews`}>
+                  <defs>
+                    <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#6366f1" stopOpacity="0.25" />
+                      <stop offset="100%" stopColor="#6366f1" stopOpacity="0" />
+                    </linearGradient>
+                  </defs>
+                  {(() => {
+                    const pts = scoreTrend.map((score, i) => {
+                      const x = scoreTrend.length === 1 ? 130 : 8 + (i * 244) / (scoreTrend.length - 1);
+                      const y = 40 - (Math.min(100, Math.max(0, score)) / 100) * 34;
+                      return { x, y, score };
+                    });
+                    const line = pts.map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(" ");
+                    const area = `${line} L ${pts[pts.length - 1].x.toFixed(1)},46 L ${pts[0].x.toFixed(1)},46 Z`;
+                    return (
+                      <>
+                        <path d={area} fill="url(#chartGradient)" />
+                        <path d={line} stroke="#6366f1" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                        {pts.map((pt, i) => (
+                          <circle
+                            key={i}
+                            cx={pt.x}
+                            cy={pt.y}
+                            r={i === pts.length - 1 ? 4 : 3}
+                            fill={i === pts.length - 1 ? "#6366f1" : "#ffffff"}
+                            stroke={i === pts.length - 1 ? "#ffffff" : "#6366f1"}
+                            strokeWidth="2"
+                          >
+                            <title>{`Interview ${i + 1}: ${pt.score}/100`}</title>
+                          </circle>
+                        ))}
+                      </>
+                    );
+                  })()}
+                </svg>
+                <div style={{ fontSize: "0.68rem", color: "#a1a1aa", textAlign: "right", fontWeight: 600 }}>
+                  Score across {scoreTrend.length} completed interviews
+                </div>
+              </>
+            ) : (
+              <div
+                style={{
+                  height: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "flex-end",
+                  justifyContent: "center",
+                  gap: "0.3rem",
+                  textAlign: "right"
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "flex-end", gap: "4px", height: "26px" }} aria-hidden="true">
+                  {[10, 16, 12, 20, 14].map((h, i) => (
+                    <span key={i} style={{ width: "5px", height: `${h}px`, borderRadius: "3px", backgroundColor: "#eceafd" }} />
+                  ))}
+                </div>
+                <div style={{ fontSize: "0.72rem", color: "#a1a1aa", fontWeight: 500, maxWidth: "230px" }}>
+                  {scoreTrend.length === 1
+                    ? "One more interview and your score trend appears here."
+                    : "Complete interviews to build your score trend."}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Resume upload progress — reflects the existing upload state machine */}
+      {uploadStatus !== "IDLE" && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fade-in"
+          style={{
+            position: "fixed",
+            right: "1.5rem",
+            bottom: "1.5rem",
+            zIndex: 1100,
+            maxWidth: "340px",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "0.65rem",
+            padding: "0.85rem 1rem",
+            borderRadius: "12px",
+            backgroundColor: "#ffffff",
+            border: `1px solid ${uploadStatus === "FAILED" ? "#fecdd3" : uploadStatus === "READY" ? "#a7f3d0" : "#e4e4e7"}`,
+            boxShadow: "var(--shadow-modal)"
+          }}
+        >
+          <div style={{ flexShrink: 0, marginTop: "1px" }}>
+            {uploadStatus === "FAILED" ? (
+              <AlertCircle size={17} color="#e11d48" />
+            ) : uploadStatus === "READY" ? (
+              <CheckCircle2 size={17} color="#059669" />
+            ) : (
+              <Sparkles size={17} color="#4f46e5" />
+            )}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#09090b", marginBottom: "0.25rem" }}>
+              {uploadStatus === "FAILED" ? "Resume upload failed" : uploadStatus === "READY" ? "Resume ready" : "Processing resume"}
+            </div>
+            <div style={{ fontSize: "0.78rem", color: "#71717a", lineHeight: 1.45 }}>
+              {uploadStatus === "FAILED" ? uploadError : statusMessage}
+            </div>
+            {uploadStatus !== "FAILED" && uploadStatus !== "READY" && (
+              <div
+                className="indeterminate-track"
+                aria-hidden="true"
+                style={{ marginTop: "0.55rem", height: "4px", borderRadius: "9999px", color: "#4f46e5" }}
+              />
+            )}
+          </div>
+          {uploadStatus === "FAILED" && (
+            <button
+              onClick={() => setUploadStatus("IDLE")}
+              aria-label="Dismiss"
+              style={{ background: "transparent", border: "none", color: "#a1a1aa", cursor: "pointer", padding: 0 }}
+            >
+              <X size={15} />
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Replace Resume Modal */}
       {showReplaceModal && (

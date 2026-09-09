@@ -1,4 +1,6 @@
 import asyncio
+import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -8,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from app.core.database import get_db, engine as _db_engine
 from app.core.security import get_current_user_payload, sanitize_input
-from app.db.models import User, Interview, InterviewState, Role, Question, Answer, Evaluation, Company, Resume, ResumeProfile
+from app.db.models import User, Interview, InterviewState, Role, Question, Answer, Evaluation, Company, Resume, ResumeProfile, Report
 from app.schemas.interview import (
     InterviewCreate, InterviewOut, CandidateAnswerSubmit,
     AnswerTurnResponse, QuestionOut, AnswerItemOut, InterviewStateOut
@@ -17,6 +19,8 @@ from app.interview.engine import AdaptiveInterviewEngine
 from app.interview.timer import InterviewTimer
 from app.evaluation.evaluator import AnswerEvaluator
 from app.reports.generator import ReportGenerator
+
+logger = logging.getLogger("ai_interviewer.interviews")
 
 router = APIRouter(prefix="/interviews", tags=["Adaptive Interview Engine"])
 
@@ -55,6 +59,32 @@ async def _interview_turn_lock(interview_id: int):
             # registry cannot grow once for every interview ever run.
             if not lock.locked() and _TURN_LOCKS.get(interview_id) is lock:
                 _TURN_LOCKS.pop(interview_id, None)
+
+
+# What a turn response is allowed to carry back to the candidate.
+#
+# The evaluator returns far more than this -- the written feedback, the evidence
+# it was drawn from, its own confidence, the review flag, the adaptive verdict
+# and which provider scored the answer. All of it is computed, persisted and fed
+# to the adaptive engine exactly as before; none of it is the candidate's to see
+# mid-interview, and the running UI reads only the turn score (its local
+# early-conclusion rule) from this dict. The rubric numbers stay because the
+# integrity suite reads them here to prove no fabricated pass was stored.
+_CANDIDATE_TURN_EVAL_KEYS = (
+    "correctness_score",
+    "relevance_score",
+    "reasoning_score",
+    "depth_score",
+    "communication_score",
+    "overall_question_score",
+    "answer_quality",
+    "recommended_action",
+)
+
+
+def _candidate_turn_evaluation(eval_dict: dict) -> dict:
+    """Project a full evaluation down to the turn response's public surface."""
+    return {k: eval_dict[k] for k in _CANDIDATE_TURN_EVAL_KEYS if k in eval_dict}
 
 
 def _eval_dict_from_row(ev: Evaluation) -> dict:
@@ -108,7 +138,7 @@ async def _replay_turn(db: AsyncSession, interview: Interview, state, evaluation
                 expected_concepts=nq.expected_concepts or [], follow_ups=nq.follow_ups or []
             )
     return AnswerTurnResponse(
-        evaluation=_eval_dict_from_row(evaluation),
+        evaluation=_candidate_turn_evaluation(_eval_dict_from_row(evaluation)),
         next_question=next_q_out,
         interview_state=_state_out_from(state),
         is_completed=interview.status == "completed",
@@ -117,12 +147,26 @@ async def _replay_turn(db: AsyncSession, interview: Interview, state, evaluation
     )
 
 
-def format_interview_out(interview: Interview, current_q: Question = None, answers: list = None) -> InterviewOut:
+def format_interview_out(
+    interview: Interview,
+    current_q: Question = None,
+    answers: list = None,
+    include_evaluations: bool = True,
+) -> InterviewOut:
+    """Serialise an interview for the client.
+
+    include_evaluations=False withholds the per-answer scores and feedback. A
+    real interviewer does not read a candidate their mark between questions,
+    and seeing one changes how the next answer is given, so during a running
+    session the candidate is shown their answers and nothing else. The
+    evaluations are still computed and persisted -- the adaptive engine needs
+    them on every turn -- and are released in full once the session is over.
+    """
     formatted_answers = []
     if answers:
         for a in answers:
             eval_dict = None
-            if hasattr(a, 'evaluation') and a.evaluation:
+            if include_evaluations and hasattr(a, 'evaluation') and a.evaluation:
                 eval_dict = {
                     "correctness_score": a.evaluation.correctness_score,
                     "relevance_score": a.evaluation.relevance_score,
@@ -301,7 +345,10 @@ async def get_interview_history(
     ).where(Interview.candidate_id == user_id).order_by(Interview.created_at.desc())
     res = await db.execute(stmt)
     interviews = res.scalars().all()
-    return [format_interview_out(i, answers=i.answers) for i in interviews]
+    return [
+        format_interview_out(i, answers=i.answers, include_evaluations=i.status == "completed")
+        for i in interviews
+    ]
 
 @router.get("/{interview_id}", response_model=InterviewOut)
 async def get_interview_session(
@@ -360,7 +407,12 @@ async def get_interview_session(
             interview.state.current_question_id = current_q.id
             await db.commit()
 
-    return format_interview_out(interview, current_q=current_q, answers=interview.answers)
+    return format_interview_out(
+        interview,
+        current_q=current_q,
+        answers=interview.answers,
+        include_evaluations=interview.status == "completed",
+    )
 
 @router.post("/{interview_id}/answer", response_model=AnswerTurnResponse)
 async def submit_answer_turn(
@@ -530,6 +582,13 @@ async def submit_answer_turn(
         answer_text = ans.candidate_answer_text
 
         # 3. Evaluate Answer with safe fallback to protect persisted answer
+        #
+        # A turn makes two LLM calls back to back -- scoring the answer, then
+        # deciding and generating the next question -- and the candidate waits
+        # through both. Timing each separately is the only way to tell which one
+        # is responsible when a turn takes twenty seconds; the numbers below
+        # carry no answer text and no identifiers beyond the interview id.
+        _t_eval = time.perf_counter()
         try:
             eval_dict = await AnswerEvaluator.evaluate_answer(
                 question_text=question.question_text,
@@ -558,6 +617,8 @@ async def submit_answer_turn(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="Answer saved, but evaluation is temporarily unavailable. Please retry."
                 )
+
+        _t_eval_done = time.perf_counter()
 
         evaluation = Evaluation(
             answer_id=ans.id,
@@ -592,6 +653,7 @@ async def submit_answer_turn(
         # A resumed turn already has its answer on record, so dedupe: the
         # engine takes this as the set of questions not to ask again.
         asked_ids = list(dict.fromkeys([a.question_id for a in interview.answers] + [question.id]))
+        _t_progress = time.perf_counter()
         updated_state, next_question, is_completed = await engine.process_answer_turn(
             interview=interview,
             state=state,
@@ -599,6 +661,14 @@ async def submit_answer_turn(
             asked_question_ids=asked_ids,
             last_eval_dict=eval_dict,
             last_answer_text=answer_text
+        )
+
+        logger.info(
+            "answer_turn_timing interview_id=%s evaluation_ms=%d progression_ms=%d turn_ms=%d",
+            interview_id,
+            int((_t_eval_done - _t_eval) * 1000),
+            int((time.perf_counter() - _t_progress) * 1000),
+            int((time.perf_counter() - _t_eval) * 1000),
         )
 
         # If interview finished, trigger automatic report generation and construct polite closing
@@ -656,7 +726,7 @@ async def submit_answer_turn(
         )
 
         return AnswerTurnResponse(
-            evaluation=eval_dict,
+            evaluation=_candidate_turn_evaluation(eval_dict),
             interviewer_ack=eval_dict.get("interviewer_ack") or None,
             next_question=next_q_out,
             interview_state=state_out,
@@ -666,25 +736,116 @@ async def submit_answer_turn(
         )
 
 
+# Report generation makes one LLM call for the executive summary, so it costs
+# several seconds. Running it inside the finish request left the candidate
+# staring at a spinner for work they do not need to wait for, and a candidate
+# who closed the tab took the request down with them. It runs detached instead,
+# on its own session, and the candidate is free to leave.
+#
+# Nothing here needs a queue or a worker: reports.interview_id is unique and
+# ReportGenerator returns the existing row rather than building a second one, so
+# a duplicate attempt -- a retry, a second tab, a self-heal from the status
+# endpoint -- is a no-op at the database level. _REPORT_TASKS only keeps the
+# task object alive; asyncio drops a task nobody holds a reference to.
+_REPORT_TASKS: dict[int, asyncio.Task] = {}
+
+
+async def _generate_report_detached(interview_id: int) -> None:
+    """Build the final report on a session of its own, outside the request."""
+    from app.core.database import AsyncSessionLocal
+    try:
+        async with AsyncSessionLocal() as session:
+            await ReportGenerator(session).generate_interview_report(interview_id)
+        logger.info("report_generated interview_id=%s", interview_id)
+    except Exception as e:
+        # The status endpoint retries on the next poll, so a failure here delays
+        # the report rather than losing it.
+        logger.error("report_generation_failed interview_id=%s: %s", interview_id, e)
+    finally:
+        _REPORT_TASKS.pop(interview_id, None)
+
+
+def _start_report_generation(interview_id: int) -> None:
+    existing = _REPORT_TASKS.get(interview_id)
+    if existing is not None and not existing.done():
+        return
+    _REPORT_TASKS[interview_id] = asyncio.create_task(_generate_report_detached(interview_id))
+
+
+async def _load_owned_interview(db: AsyncSession, interview_id: int, payload: dict) -> Interview:
+    user_id = payload["user_id"]
+    user_role = payload.get("role", "candidate")
+    res = await db.execute(select(Interview).where(Interview.id == interview_id))
+    interview = res.scalars().first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found.")
+    if interview.candidate_id != user_id and user_role not in ["admin", "placement_staff"]:
+        raise HTTPException(status_code=403, detail="Unauthorized for this interview.")
+    return interview
+
+
 @router.post("/{interview_id}/finish")
 async def finish_interview_session(
     interview_id: int,
     payload: dict = Depends(get_current_user_payload),
     db: AsyncSession = Depends(get_db)
 ):
-    user_id = payload["user_id"]
-    stmt = select(Interview).where(Interview.id == interview_id, Interview.candidate_id == user_id)
-    res = await db.execute(stmt)
-    interview = res.scalars().first()
-    if not interview:
-        raise HTTPException(status_code=404, detail="Interview not found.")
+    """Finalise the session exactly once and hand the report off to the background.
 
-    interview.status = "completed"
-    interview.end_time = datetime.utcnow()
-    await db.commit()
+    Serialised on the same per-interview lock the answer turn uses, so a double
+    click, a retried request and a second tab all fold into one finish.
+    """
+    async with _interview_turn_lock(interview_id):
+        interview = await _load_owned_interview(db, interview_id, payload)
 
-    # Generate final report
-    report_gen = ReportGenerator(db)
-    report = await report_gen.generate_interview_report(interview_id)
-    return {"message": "Interview session completed successfully.", "report_id": report.id}
+        res_report = await db.execute(select(Report).where(Report.interview_id == interview_id))
+        report = res_report.scalars().first()
+        if report is not None:
+            # Already finalised. Report the same outcome instead of redoing it.
+            return {
+                "message": "Interview session already completed.",
+                "status": "ready",
+                "report_id": report.id,
+            }
+
+        if interview.status != "completed":
+            interview.status = "completed"
+            interview.end_time = datetime.utcnow()
+            await db.commit()
+
+        _start_report_generation(interview_id)
+
+    return {
+        "message": "Interview session completed successfully.",
+        "status": "processing",
+        "report_id": None,
+    }
+
+
+@router.get("/{interview_id}/report-status")
+async def get_report_status(
+    interview_id: int,
+    payload: dict = Depends(get_current_user_payload),
+    db: AsyncSession = Depends(get_db)
+):
+    """Whether the final report is ready, answered from the database.
+
+    The candidate can close the tab, come back on another device and ask again:
+    the answer comes from the stored report, not from anything held in memory.
+    If the interview is finished but no report exists -- the process restarted
+    mid-generation, or the LLM call failed -- generation is restarted here. That
+    is idempotent for the same reason the finish endpoint is.
+    """
+    interview = await _load_owned_interview(db, interview_id, payload)
+
+    res_report = await db.execute(select(Report).where(Report.interview_id == interview_id))
+    report = res_report.scalars().first()
+    if report is not None:
+        return {"status": "ready", "report_id": report.id}
+
+    if interview.status != "completed":
+        return {"status": "in_progress", "report_id": None}
+
+    _start_report_generation(interview_id)
+    return {"status": "processing", "report_id": None}
 

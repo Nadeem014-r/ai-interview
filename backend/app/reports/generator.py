@@ -1,6 +1,7 @@
 from typing import Dict, Any, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from app.db.models import Interview, Answer, Evaluation, Report, Question, Company, Role, User
 from app.evaluation.scorer import DeterministicScorer
 from app.ai.factory import AIFactory
@@ -220,6 +221,22 @@ Return JSON:
         )
 
         self.db.add(report)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            # reports.interview_id is unique. Another caller finished this same
+            # report while this one was being built -- the finish endpoint and
+            # the auto-completion at the end of the last answer turn can both
+            # reach here, on separate sessions, and the existence check above
+            # cannot span them. Its report is as valid as this one, so it stands
+            # and this attempt is discarded rather than raising at the candidate.
+            await self.db.rollback()
+            res_winner = await self.db.execute(
+                select(Report).where(Report.interview_id == interview_id)
+            )
+            winner = res_winner.scalars().first()
+            if winner is None:
+                raise
+            return winner
         await self.db.refresh(report)
         return report

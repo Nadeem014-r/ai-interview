@@ -382,14 +382,13 @@ async def test_cat_g_01_interview_completion_and_report_accuracy():
         # Finish interview
         finish_res = await client.post(f"/api/v1/interviews/{int_id}/finish", headers=headers)
         assert finish_res.status_code == 200
-        report_id = finish_res.json()["report_id"]
-        assert report_id > 0
+        assert finish_res.json()["status"] in ("processing", "ready")
 
         # Fetch report
         rep_res = await client.get(f"/api/v1/reports/{int_id}", headers=headers)
         assert rep_res.status_code == 200
         report_data = rep_res.json()
-        assert report_data["id"] == report_id
+        assert report_data["id"] > 0
         assert report_data["interview_id"] == int_id
         assert 0.0 <= report_data["overall_score"] <= 100.0
         assert "rubric_scores" in report_data

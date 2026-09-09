@@ -21,6 +21,8 @@ from app.interview.conversation import FollowUpEngine
 from app.interview.scoring import ScoringManager
 from app.interview.memory import InterviewMemory, MemoryManager
 
+logger = logging.getLogger("ai_interviewer.engine")
+
 
 class AdaptiveInterviewEngine:
     """Master coordinator for adaptive, memory-aware, human-like interview turns."""
@@ -486,6 +488,24 @@ class AdaptiveInterviewEngine:
             state.weak_topics = weak
             state.strong_topics = strong
 
+            # Offer the coding exercise here, at the point where a fresh
+            # competency question would otherwise be chosen -- so it takes the
+            # place of one normal turn rather than being bolted onto the flow.
+            # Follow-up probes, recovery and early conclusion all return before
+            # this line, so none of them can be interrupted by it.
+            next_question = await self._maybe_build_coding_question(
+                interview=interview,
+                state=state,
+                memory=memory,
+                remaining_sec=remaining_sec,
+                asked_question_ids=asked_question_ids,
+            )
+            if next_question is not None:
+                state.current_question_id = next_question.id
+                await self.db.commit()
+                await self.db.refresh(state)
+                return state, next_question, False
+
             # Format resume context string for question selector
             resume_context_str = None
             if memory.skills:
@@ -508,6 +528,85 @@ class AdaptiveInterviewEngine:
         await self.db.commit()
         await self.db.refresh(state)
         return state, next_question, False
+
+    async def _maybe_build_coding_question(
+        self,
+        interview: "Interview",
+        state: "InterviewState",
+        memory,
+        remaining_sec: int,
+        asked_question_ids: List[int],
+    ) -> Optional[Question]:
+        """Create the interview's one coding exercise, or return None.
+
+        Returns None for every interview that is not a fit, which is most of
+        them. Costs no provider call: eligibility is decided from the role, the
+        candidate's own skills and the state already in hand.
+        """
+        try:
+            from app.interview.coding_selector import build_coding_question, is_coding_eligible
+
+            stmt_asked = select(Question.question_type).where(Question.id.in_(asked_question_ids or [-1]))
+            res_asked = await self.db.execute(stmt_asked)
+            already_asked = any((row[0] or "") == "coding" for row in res_asked.all())
+
+            role = None
+            company = None
+            if interview.role_id:
+                try:
+                    role = await self.db.get(Role, interview.role_id)
+                except Exception:
+                    role = None
+            if interview.company_id:
+                try:
+                    company = await self.db.get(Company, interview.company_id)
+                except Exception:
+                    company = None
+
+            eligible, reason = is_coding_eligible(
+                interview_type=interview.interview_type,
+                role_title=getattr(role, "title", None),
+                required_skills=getattr(role, "required_skills", None),
+                role_key_topics=getattr(role, "key_topics", None),
+                candidate_skills=getattr(memory, "skills", None),
+                questions_asked_count=state.questions_asked_count,
+                time_remaining_seconds=remaining_sec,
+                interview_stage=state.interview_stage,
+                already_asked=already_asked,
+            )
+            if not eligible:
+                logger.debug(f"Coding stage not offered: {reason}")
+                return None
+
+            data = build_coding_question(
+                topic=state.current_topic or "Problem Solving",
+                difficulty=state.difficulty or "medium",
+                company_name=getattr(company, "name", None),
+                role_title=getattr(role, "title", None),
+                candidate_skills=getattr(memory, "skills", None),
+            )
+
+            coding_q = Question(
+                company_id=interview.company_id,
+                role_id=interview.role_id,
+                topic=data["topic"],
+                subtopic=data["subtopic"],
+                difficulty=data["difficulty"],
+                question_type="coding",
+                question_text=data["question_text"],
+                expected_concepts=data["expected_concepts"],
+                follow_ups=data["follow_ups"],
+            )
+            self.db.add(coding_q)
+            await self.db.commit()
+            await self.db.refresh(coding_q)
+            state.interview_stage = "coding"
+            return coding_q
+        except Exception as e:
+            # A coding exercise is an enhancement. If anything about it fails the
+            # interview continues with a normal question rather than stopping.
+            logger.warning(f"Coding question selection skipped: {e}")
+            return None
 
     # -------------------------------------------------------------------------
     # process_answer_turn_v2: Depth State Machine + Persona Controller overlay
