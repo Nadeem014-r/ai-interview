@@ -94,7 +94,14 @@ async def on_startup():
             if prewarm_tts:
                 logger.info("Pre-warming Kokoro TTS model (DEFAULT_TTS_PROVIDER=kokoro)...")
                 from app.providers.kokoro_tts import KokoroTTSProvider
-                await asyncio.to_thread(KokoroTTSProvider._get_pipeline)
+                # ensure_ready(), not _get_pipeline(): loading the model is only
+                # part of the cold cost -- the first synthesis also fetches the
+                # voice tensor and initialises the g2p frontend, and that was
+                # still being paid by the first question of the first interview.
+                # It also takes the same lock a concurrent request takes, so a
+                # request that arrives mid-warm waits for this rather than
+                # repeating it.
+                await KokoroTTSProvider().ensure_ready()
             if prewarm_stt:
                 logger.info("Pre-warming Whisper STT model (DEFAULT_STT_PROVIDER=whisper)...")
                 from app.providers.whisper_stt import WhisperSmallSTTProvider

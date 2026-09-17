@@ -19,6 +19,11 @@ import {
   Video
 } from "lucide-react";
 import { getStoredToken } from "@/lib/auth";
+import {
+  fetchInterviewerAudioWithRetry,
+  getCachedInterviewerAudio,
+  armInterviewAudio
+} from "@/lib/tts";
 
 // Standard 16kHz mono WAV encoder for zero-dependency universal speech decoding
 function encodePCMToWAV(samples: Float32Array, sampleRate: number = 16000): Blob {
@@ -152,10 +157,8 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
   const animationFrameRef = useRef<number | null>(null);
   const lastSpokenQuestionRef = useRef<string>("");
 
-  // SINGLE-AUDIO-OWNER CONTROLLER & PROMISE REFS
+  // SINGLE-AUDIO-OWNER CONTROLLER
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
-  const cachedAudioMapRef = useRef<{ [text: string]: string }>({});
-  const ttsFetchPromiseMapRef = useRef<{ [text: string]: Promise<string | null> }>({});
 
   // Web Audio Context for Interviewer TTS
   const ttsAudioCtxRef = useRef<AudioContext | null>(null);
@@ -172,9 +175,6 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
 
   // Stop and clean up any currently playing interviewer audio (Single Audio Owner)
   const stopCurrentInterviewerAudio = () => {
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-    }
     if (ttsAnimFrameRef.current) {
       cancelAnimationFrame(ttsAnimFrameRef.current);
       ttsAnimFrameRef.current = null;
@@ -218,69 +218,22 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
     setCandidateAudioLevel(0);
   };
 
+  // The interviewer audio cache is session-scoped (@/lib/tts) and deliberately
+  // outlives this room: a coding turn unmounts it and the interview resumes
+  // afterwards, so revoking every clip here would re-synthesise lines already
+  // spoken.
   useEffect(() => {
     return () => {
       stopCurrentInterviewerAudio();
       stopCandidateMedia();
-      Object.values(cachedAudioMapRef.current).forEach((url) => {
-        try {
-          URL.revokeObjectURL(url);
-        } catch (e) {}
-      });
-      cachedAudioMapRef.current = {};
-      ttsFetchPromiseMapRef.current = {};
+      // Let a remount speak the (already cached) line it just stopped.
+      lastSpokenQuestionRef.current = "";
     };
   }, []);
 
-  // Fetch or retrieve cached Kokoro TTS audio with in-flight deduplication
-  const fetchTTSAudio = async (text: string): Promise<string | null> => {
-    if (!text || !text.trim()) return null;
-    if (typeof window !== "undefined" && (window as any).__TTS_AUDIO_CACHE__?.[text]) {
-      return (window as any).__TTS_AUDIO_CACHE__[text];
-    }
-    if (cachedAudioMapRef.current[text]) {
-      return cachedAudioMapRef.current[text];
-    }
-    if (ttsFetchPromiseMapRef.current[text]) {
-      return ttsFetchPromiseMapRef.current[text];
-    }
-
-    const promise = (async () => {
-      try {
-        const token = getStoredToken();
-        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1";
-        const res = await fetch(`${baseUrl}/voice/tts`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({ text })
-        });
-        if (res.ok) {
-          const audioBlob = await res.blob();
-          if (audioBlob && audioBlob.size > 0) {
-            const audioUrl = URL.createObjectURL(audioBlob);
-            cachedAudioMapRef.current[text] = audioUrl;
-            if (typeof window !== "undefined") {
-              (window as any).__TTS_AUDIO_CACHE__ = (window as any).__TTS_AUDIO_CACHE__ || {};
-              (window as any).__TTS_AUDIO_CACHE__[text] = audioUrl;
-            }
-            return audioUrl;
-          }
-        }
-        return null;
-      } catch (e) {
-        console.warn("Kokoro TTS synthesis error:", e);
-        return null;
-      } finally {
-        delete ttsFetchPromiseMapRef.current[text];
-      }
-    })();
-
-    ttsFetchPromiseMapRef.current[text] = promise;
-    return promise;
-  };
+  // Interviewer audio comes from the session-wide cache in @/lib/tts, so the
+  // pre-synthesis started during the countdown and the request this room would
+  // otherwise make for the same line are one request, in one voice.
 
   // Candidate camera setup & stream attachment
   const enableCandidateCamera = async (): Promise<MediaStream | null> => {
@@ -455,9 +408,9 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
     };
 
     audio.onerror = (e) => {
-      console.warn("Audio playback error, falling back to speech synthesis:", e);
+      console.warn("Interviewer audio playback error:", e);
       setInterviewerAudioLevel(0);
-      speakWithBrowserSpeech(text);
+      handleInterviewerAudioUnavailable();
     };
 
     try {
@@ -467,43 +420,60 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
         startBargeInListener();
       }
     } catch (playErr: unknown) {
-      console.warn("Audio play rejected, attempting browser speech synthesis:", playErr);
-      speakWithBrowserSpeech(text);
+      // This clip was stopped on purpose, not refused by the browser.
+      if (currentAudioRef.current !== audio) return;
+      // Playback was refused, almost always because the document has not been
+      // interacted with yet. The audio is already synthesised and correct, so
+      // ask for the gesture and play this same clip -- never re-speak the line
+      // through a different voice.
+      console.warn("Interviewer audio play rejected; awaiting user gesture:", playErr);
+      setInterviewerAudioLevel(0);
+      setVoiceState("audio_blocked");
     }
   };
 
-  // Synthesize and play AI speech via Kokoro 0.9.4 with audio caching and immediate speech
+  // Synthesize and play AI speech via Kokoro with session-wide audio caching.
+  //
+  // ONE voice owns the whole session, and there is no second voice to fall back
+  // to. A line that cannot be synthesised is retried in the same voice; if it
+  // still cannot be, the room says so and lets the candidate carry on reading
+  // the question rather than hearing a different interviewer for one turn.
   const speakQuestion = async (text: string) => {
     if (!text || !text.trim()) return;
 
-    const cachedUrl = (typeof window !== "undefined" && (window as any).__TTS_AUDIO_CACHE__?.[text]) || cachedAudioMapRef.current[text];
+    const cachedUrl = getCachedInterviewerAudio(text);
     if (cachedUrl) {
       await playAudioUrl(cachedUrl, text);
       return;
     }
 
-    // ONE voice owns the whole session. Starting browser speech immediately
-    // while Kokoro was fetched only for the cache meant the first question
-    // (pre-warmed Kokoro, female) and every later question (Windows SAPI,
-    // male by default) were spoken by different voices. Server TTS is now
-    // always awaited; the browser synthesiser is a real failure path only.
     stopCurrentInterviewerAudio();
     setErrorMessage(null);
     // Show the line straight away so the wait for audio reads as a pause.
     setActiveSubtitleText(text);
     setVoiceState("tts_loading");
 
-    try {
-      const audioUrl = await fetchTTSAudio(text);
-      if (audioUrl) {
-        await playAudioUrl(audioUrl, text);
-        return;
-      }
-    } catch (err) {
-      console.warn("Interviewer TTS synthesis failed, using browser speech:", err);
+    const audioUrl = await fetchInterviewerAudioWithRetry(text);
+    if (audioUrl) {
+      await playAudioUrl(audioUrl, text);
+      return;
     }
 
-    speakWithBrowserSpeech(text);
+    handleInterviewerAudioUnavailable();
+  };
+
+  // Server TTS could not produce this line even after a retry. Keep the turn
+  // moving on the written question instead of substituting another voice.
+  const handleInterviewerAudioUnavailable = () => {
+    setInterviewerAudioLevel(0);
+    setErrorMessage(
+      "Interviewer audio is temporarily unavailable. The question is shown above — you can answer now, or retry the audio."
+    );
+    if (isConcluding) {
+      onConclusionFinished?.();
+    } else {
+      transitionToListening();
+    }
   };
 
   // Automatically speak active question ONCE when it becomes active
@@ -515,104 +485,15 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
     }
   }, [currentQuestionText]);
 
-  // Chrome returns [] from getVoices() on the first call, so the opening line
-  // was spoken by the OS default (male on Windows) and later lines by whatever
-  // the loaded list offered. Pinning one voice for the session, and priming the
-  // list when it arrives, keeps the interviewer sounding like one person.
-  const pinnedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    const prime = () => {
-      pinnedVoiceRef.current = null;
-      resolveBrowserVoice();
-    };
-    prime();
-    window.speechSynthesis.addEventListener?.("voiceschanged", prime);
-    return () => window.speechSynthesis.removeEventListener?.("voiceschanged", prime);
-  }, []);
-
-  // Kokoro's interviewer voice (af_heart) is female, so the fallback prefers a
-  // female English voice: dropping to it changes audio quality, not the person.
-  const resolveBrowserVoice = (): SpeechSynthesisVoice | null => {
-    if (pinnedVoiceRef.current) return pinnedVoiceRef.current;
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
-
-    const voices = window.speechSynthesis.getVoices();
-    if (!voices || voices.length === 0) return null;
-
-    const english = voices.filter((v) => v.lang && v.lang.toLowerCase().startsWith("en"));
-    if (english.length === 0) return null;
-
-    const FEMALE_HINTS = ["zira", "aria", "jenny", "michelle", "samantha", "female", "eva", "libby", "sonia"];
-    const isFemale = (v: SpeechSynthesisVoice) =>
-      FEMALE_HINTS.some((h) => v.name.toLowerCase().includes(h));
-    const isHighQuality = (v: SpeechSynthesisVoice) => /natural|neural|google/i.test(v.name);
-
-    const chosen =
-      english.find((v) => isFemale(v) && isHighQuality(v)) ||
-      english.find(isFemale) ||
-      english.find(isHighQuality) ||
-      english[0];
-
-    pinnedVoiceRef.current = chosen || null;
-    return pinnedVoiceRef.current;
-  };
-
-  // Browser Native Web Speech API fallback
-  const speakWithBrowserSpeech = (text: string) => {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-      if (isConcluding) {
-        onConclusionFinished?.();
-      } else {
-        transitionToListening();
-      }
-      return;
-    }
-
-    try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
-
-      const preferredVoice = resolveBrowserVoice();
-      if (preferredVoice) utterance.voice = preferredVoice;
-
-      utterance.onstart = () => {
-        setActiveSubtitleText(text);
-        setVoiceState("ai_speaking");
-        if (!isConcluding) startBargeInListener();
-      };
-
-      utterance.onend = () => {
-        setInterviewerAudioLevel(0);
-        if (isConcluding) {
-          onConclusionFinished?.();
-        } else {
-          transitionToListening();
-        }
-      };
-
-      utterance.onerror = () => {
-        setInterviewerAudioLevel(0);
-        if (isConcluding) {
-          onConclusionFinished?.();
-        } else {
-          transitionToListening();
-        }
-      };
-
-      window.speechSynthesis.speak(utterance);
-    } catch (e) {
-      console.warn("Web Speech API error:", e);
-      if (isConcluding) {
-        onConclusionFinished?.();
-      } else {
-        transitionToListening();
-      }
-    }
-  };
+  // There is deliberately no Web Speech API path here any more.
+  //
+  // The browser synthesiser was reached whenever server TTS failed or playback
+  // was refused, and it speaks in a different voice -- on Windows a male one by
+  // default, because Chrome returns [] from getVoices() on the first call and
+  // the opening line got the OS default. That turned a one-line audio failure
+  // into an interviewer who changed person mid-session. A line that cannot be
+  // spoken in the interviewer's own voice is now retried, or reported, but
+  // never spoken by someone else.
 
   // Background microphone listener during AI speaking for barge-in detection
   const startBargeInListener = async () => {
@@ -669,9 +550,6 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
           bargeInSpeechDurationRef.current += delta;
           if (bargeInSpeechDurationRef.current >= BARGE_IN_TRIGGER_MS) {
             stopCurrentInterviewerAudio();
-            if (typeof window !== "undefined" && "speechSynthesis" in window) {
-              window.speechSynthesis.cancel();
-            }
             transitionToListening(true);
             return;
           }
@@ -937,8 +815,10 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
     }
   };
 
-  // Unblock autoplay and resume audio playback upon user interaction
+  // Unblock autoplay and resume audio playback upon user interaction.
+  // This runs inside a click, so it is the gesture the browser was waiting for.
   const handleUnblockAudio = async () => {
+    await armInterviewAudio();
     try {
       if (ttsAudioCtxRef.current && ttsAudioCtxRef.current.state === "suspended") {
         await ttsAudioCtxRef.current.resume();
@@ -1328,7 +1208,7 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                     textAlign: "center"
                   }}
                 >
-                  <CameraOff size={44} color="#f43f5e" style={{ marginBottom: "0.75rem" }} />
+                  <CameraOff size={44} color="#fb7185" style={{ marginBottom: "0.75rem" }} />
                   <span style={{ fontSize: "0.95rem", fontWeight: 700, color: "#ffffff", marginBottom: "0.35rem" }}>
                     Camera Access Needed
                   </span>
@@ -1363,7 +1243,7 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                     alignItems: "center",
                     justifyContent: "center",
                     backgroundColor: "#0f172a",
-                    color: "#64748b"
+                    color: "var(--text-muted)"
                   }}
                 >
                   <CameraOff size={44} style={{ marginBottom: "0.75rem" }} />
@@ -1481,17 +1361,17 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
               className="saas-card"
               style={{
                 padding: "1.25rem 1.5rem",
-                backgroundColor: "#ffffff",
+                backgroundColor: "var(--bg-surface)",
                 borderRadius: "16px",
-                border: "1px solid #e2e8f0",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.04)"
+                border: "1px solid var(--border-subtle)",
+                boxShadow: "0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 20px 46px -22px rgba(0, 0, 0, 0.9)"
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
                 <div
                   style={{
                     fontSize: "0.78rem",
-                    color: "#4f46e5",
+                    color: "var(--accent-brand)",
                     textTransform: "uppercase",
                     letterSpacing: "0.06em",
                     fontWeight: 700
@@ -1501,12 +1381,12 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                   {voiceState === "ai_speaking" && (
-                    <span style={{ fontSize: "0.78rem", color: "#6366f1", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                    <span style={{ fontSize: "0.78rem", color: "var(--accent-brand)", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.3rem" }}>
                       <Volume2 size={14} className="spin" /> Speaking...
                     </span>
                   )}
                   {(voiceState === "listening" || voiceState === "candidate_speaking") && (
-                    <span style={{ fontSize: "0.78rem", color: "#10b981", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                    <span style={{ fontSize: "0.78rem", color: "var(--accent-emerald)", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.3rem" }}>
                       <Mic size={14} /> Listening...
                     </span>
                   )}
@@ -1517,7 +1397,7 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                 style={{
                   fontSize: "1.12rem",
                   fontWeight: 500,
-                  color: "#0f172a",
+                  color: "var(--text-primary)",
                   lineHeight: 1.6,
                   margin: 0
                 }}
@@ -1548,7 +1428,9 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
                       borderRadius: "10px"
                     }}
                   >
-                    <Play size={16} /> Start Interview
+                    {/* Not a second start: the interview is already running and
+                        this only re-asks the browser for playback permission. */}
+                    <Play size={16} /> Enable Interviewer Audio
                   </button>
                 )}
 
@@ -1636,10 +1518,10 @@ export const VideoInteractionRoom: React.FC<VideoInteractionRoomProps> = ({
               className="saas-card"
               style={{
                 padding: "1rem 1.25rem",
-                backgroundColor: "#fff1f2",
-                border: "1px solid #fecdd3",
+                backgroundColor: "var(--accent-rose-light)",
+                border: "1px solid rgba(251, 113, 133, 0.32)",
                 borderRadius: "12px",
-                color: "#e11d48",
+                color: "var(--accent-rose)",
                 fontSize: "0.88rem",
                 display: "flex",
                 alignItems: "center",

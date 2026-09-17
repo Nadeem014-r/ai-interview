@@ -138,7 +138,8 @@ class QuestionSelector:
         previous_context: Optional[List[Dict[str, str]]] = None,
         eval_dict: Optional[Dict[str, Any]] = None,
         memory: Optional[InterviewMemory] = None,
-        candidate_level: str = "entry"
+        candidate_level: str = "entry",
+        allow_llm_generation: bool = True
     ) -> Question:
         """
         Selects an existing matching question or generates a company/role/resume-tailored question.
@@ -147,6 +148,12 @@ class QuestionSelector:
         2. Matching unasked question bank item
         3. Predefined behavioral/HR fallback
         4. Safe deterministic fallback
+
+        allow_llm_generation=False skips step 1. The caller passes it when this
+        turn has already spent an LLM call on a question that was then rejected
+        as a duplicate: generating again would be a second charge, a second
+        wait, and a second chance at the same duplicate, when steps 2-4 can
+        supply a question that is guaranteed not to repeat one already asked.
         """
         clean_type = (interview_type or "technical").lower()
         clean_diff = (difficulty or "medium").lower()
@@ -161,7 +168,21 @@ class QuestionSelector:
             res_asked = await self.db.execute(stmt_asked)
             asked_texts = [row[0] for row in res_asked.all()]
 
-        # Step 1: Dynamic generation grounded in RAG + Memory Context
+        # Step 1: Dynamic generation grounded in RAG + Memory Context.
+        # Skipped entirely when the caller has already spent this turn's LLM
+        # call -- everything below step 1 is local, so the turn falls straight
+        # through to the bank instead of making a second provider round trip.
+        if not allow_llm_generation:
+            return await self._select_without_generation(
+                clean_type=clean_type,
+                clean_topic=clean_topic,
+                clean_diff=clean_diff,
+                company_id=company_id,
+                role_id=role_id,
+                asked_question_ids=asked_question_ids,
+                asked_texts=asked_texts,
+            )
+
         rag_context = ""
         try:
             rag_context = await self.rag_engine.get_relevant_context(
@@ -293,6 +314,34 @@ Return JSON:
         except Exception:
             pass
 
+        # Steps 2-4 are local: question bank, then HR/behavioural presets,
+        # then a deterministic question. Shared with the no-generation path.
+        return await self._select_without_generation(
+            clean_type=clean_type,
+            clean_topic=clean_topic,
+            clean_diff=clean_diff,
+            company_id=company_id,
+            role_id=role_id,
+            asked_question_ids=asked_question_ids,
+            asked_texts=asked_texts,
+        )
+
+    async def _select_without_generation(
+        self,
+        clean_type: str,
+        clean_topic: str,
+        clean_diff: str,
+        company_id: int,
+        role_id: int,
+        asked_question_ids: List[int],
+        asked_texts: List[str],
+    ) -> Question:
+        """Pick a question without calling a provider.
+
+        The question bank first, then the HR/behavioural presets, then a
+        deterministic question on the topic. Every branch checks the asked
+        list, so none of them can repeat a question already put to the
+        candidate."""
         # Step 2: Query question bank for matching topic and type (only if not duplicate)
         stmt = select(Question)
         if clean_type in ["hr", "behavioral"]:

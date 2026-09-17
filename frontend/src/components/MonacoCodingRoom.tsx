@@ -50,26 +50,38 @@ const LANGUAGE_LABELS: Record<Language, string> = { cpp: "C++", java: "Java" };
 interface MonacoCodingRoomProps {
   questionText: string;
   expectedConcepts?: string[];
-  /** Resolves when the submission has been accepted by the interview engine. */
-  onCodeSubmit: (submission: string) => Promise<void> | void;
-  submitting: boolean;
+  /**
+   * Resolves when the submission has been accepted by the interview engine.
+   * Not used, and not required, in practice mode: there is nothing to submit to.
+   */
+  onCodeSubmit?: (submission: string) => Promise<void> | void;
+  submitting?: boolean;
   /** True once this turn's submission is on record. */
-  submitted: boolean;
+  submitted?: boolean;
+  /**
+   * Standalone practice outside any interview. The editor is identical, but
+   * there is no submission: no interview turn exists to attach one to, nothing
+   * is stored and nothing is graded. The workspace says so and offers no submit
+   * control, rather than showing a "Submit solution" button that claimed the
+   * final report would read the code.
+   */
+  practice?: boolean;
 }
 
 export const MonacoCodingRoom: React.FC<MonacoCodingRoomProps> = ({
   questionText,
   expectedConcepts = [],
   onCodeSubmit,
-  submitting,
-  submitted,
+  submitting = false,
+  submitted = false,
+  practice = false,
 }) => {
   const [language, setLanguage] = useState<Language>("cpp");
   const [code, setCode] = useState<string>(STARTERS.cpp);
   const [touched, setTouched] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
-  const locked = submitted || submitting;
+  const locked = !practice && (submitted || submitting);
 
   const switchLanguage = (next: Language) => {
     if (locked) return;
@@ -80,7 +92,7 @@ export const MonacoCodingRoom: React.FC<MonacoCodingRoomProps> = ({
   };
 
   const handleSubmit = async () => {
-    if (locked || !code.trim()) return;
+    if (practice || !onCodeSubmit || locked || !code.trim()) return;
     if (!confirming) {
       setConfirming(true);
       return;
@@ -102,10 +114,12 @@ export const MonacoCodingRoom: React.FC<MonacoCodingRoomProps> = ({
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-          <div style={{ backgroundColor: "#09090b", padding: "0.35rem", borderRadius: "6px", color: "#ffffff" }}>
+          <div style={{ backgroundColor: "#6d5cff", padding: "0.35rem", borderRadius: "6px", color: "#ffffff" }}>
             <Code2 size={15} />
           </div>
-          <span style={{ fontSize: "0.825rem", fontWeight: 600, color: "#09090b" }}>Coding Exercise</span>
+          <span style={{ fontSize: "0.825rem", fontWeight: 600, color: "var(--text-primary)" }}>
+            {practice ? "Practice Exercise" : "Coding Exercise"}
+          </span>
         </div>
 
         <div style={{ display: "flex", gap: "0.35rem" }} role="group" aria-label="Language">
@@ -121,9 +135,9 @@ export const MonacoCodingRoom: React.FC<MonacoCodingRoomProps> = ({
                 fontWeight: 600,
                 borderRadius: "8px",
                 cursor: locked ? "not-allowed" : "pointer",
-                border: `1px solid ${language === lang ? "#4f46e5" : "#e4e4e7"}`,
-                backgroundColor: language === lang ? "#eef2ff" : "#ffffff",
-                color: language === lang ? "#3730a3" : "#52525b",
+                border: `1px solid ${language === lang ? "rgba(139, 125, 255, 0.45)" : "var(--border-subtle)"}`,
+                backgroundColor: language === lang ? "var(--accent-brand-light)" : "rgba(255, 255, 255, 0.04)",
+                color: language === lang ? "var(--accent-brand-hover)" : "var(--text-secondary)",
               }}
             >
               {LANGUAGE_LABELS[lang]}
@@ -132,13 +146,13 @@ export const MonacoCodingRoom: React.FC<MonacoCodingRoomProps> = ({
         </div>
       </div>
 
-      <p style={{ fontSize: "1.02rem", fontWeight: 500, color: "#09090b", lineHeight: 1.55, whiteSpace: "pre-wrap", margin: "0 0 1rem" }}>
+      <p style={{ fontSize: "1.02rem", fontWeight: 500, color: "var(--text-primary)", lineHeight: 1.55, whiteSpace: "pre-wrap", margin: "0 0 1rem" }}>
         {questionText}
       </p>
 
       {expectedConcepts.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", alignItems: "center", marginBottom: "1rem" }}>
-          <span style={{ fontSize: "0.7rem", color: "#71717a", fontWeight: 600, textTransform: "uppercase" }}>Focus:</span>
+          <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Focus:</span>
           {expectedConcepts.map((c) => (
             <span key={c} className="badge badge-neutral" style={{ fontSize: "0.72rem" }}>
               {c}
@@ -155,17 +169,18 @@ export const MonacoCodingRoom: React.FC<MonacoCodingRoomProps> = ({
           padding: "0.65rem 0.85rem",
           marginBottom: "0.85rem",
           borderRadius: "8px",
-          backgroundColor: "#f5f7ff",
-          border: "1px solid #e0e7ff",
-          color: "#3730a3",
+          backgroundColor: "var(--accent-brand-light)",
+          border: "1px solid rgba(139, 125, 255, 0.28)",
+          color: "var(--accent-brand-hover)",
           fontSize: "0.78rem",
           lineHeight: 1.45,
         }}
       >
         <Info size={15} style={{ flexShrink: 0, marginTop: "1px" }} />
         <span>
-          Your code is not compiled or run here. It is read and assessed as part of your final
-          report, so make your approach and complexity clear in comments. You have one submission.
+          {practice
+            ? "Practice only. Your code is not compiled, run, saved, submitted or assessed — this is the interview editor to get familiar with, nothing more."
+            : "Your code is not compiled or run here. It is read and assessed as part of your final report, so make your approach and complexity clear in comments. You have one submission."}
         </span>
       </div>
 
@@ -198,8 +213,10 @@ export const MonacoCodingRoom: React.FC<MonacoCodingRoomProps> = ({
       />
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", marginTop: "1rem", flexWrap: "wrap" }}>
-        <span style={{ fontSize: "0.78rem", color: submitted ? "#047857" : "#71717a", display: "flex", alignItems: "center", gap: "0.35rem" }}>
-          {submitted ? (
+        <span style={{ fontSize: "0.78rem", color: !practice && submitted ? "var(--accent-emerald)" : "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+          {practice ? (
+            `Practising in ${LANGUAGE_LABELS[language]} — nothing here is submitted`
+          ) : submitted ? (
             <>
               <Lock size={14} /> Submitted. This solution is final.
             </>
@@ -210,7 +227,9 @@ export const MonacoCodingRoom: React.FC<MonacoCodingRoomProps> = ({
           )}
         </span>
 
-        {!submitted && (
+        {/* No submit control in practice mode: there is no interview turn to
+            submit to, so any button here would be claiming something untrue. */}
+        {!practice && !submitted && (
           <button
             onClick={handleSubmit}
             disabled={locked || !code.trim()}

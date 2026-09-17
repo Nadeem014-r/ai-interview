@@ -66,15 +66,23 @@ export const InterviewTimer: React.FC<InterviewTimerProps> = ({
         display: "inline-flex",
         alignItems: "center",
         gap: "0.5rem",
-        padding: "0.35rem 0.85rem",
-        backgroundColor: isLow ? "var(--accent-rose-light)" : "#f4f4f5",
-        border: `1px solid ${isLow ? "#fecdd3" : "#e4e4e7"}`,
+        padding: "0.38rem 0.9rem",
+        background: isLow
+          ? "linear-gradient(135deg, rgba(251, 113, 133, 0.22) 0%, rgba(251, 113, 133, 0.10) 100%)"
+          : "linear-gradient(135deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        border: `1px solid ${isLow ? "rgba(251, 113, 133, 0.45)" : "rgba(255, 255, 255, 0.14)"}`,
         borderRadius: "9999px",
-        color: isLow ? "var(--accent-rose)" : "#09090b",
+        color: isLow ? "#fda4af" : "var(--text-primary)",
         fontWeight: 700,
-        fontFamily: "monospace",
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+        fontVariantNumeric: "tabular-nums",
+        letterSpacing: "0.01em",
         fontSize: "0.925rem",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.04)"
+        boxShadow: isLow
+          ? "0 0 22px -6px rgba(251, 113, 133, 0.6), 0 1px 0 rgba(255, 255, 255, 0.12) inset"
+          : "0 0 20px -8px rgba(124, 92, 255, 0.55), 0 1px 0 rgba(255, 255, 255, 0.12) inset"
       }}
     >
       <Clock size={15} />

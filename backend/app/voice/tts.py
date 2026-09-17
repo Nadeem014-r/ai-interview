@@ -5,9 +5,12 @@ cancellation support, and safe exception normalization for speech synthesis.
 """
 
 import asyncio
+import inspect
 from typing import Optional, Tuple, Dict, Any
 
 from app.ai.factory import AIFactory
+from app.voice import tts_cache
+from app.voice.concurrency import inference_slot as _inference_slot
 from app.voice.latency import LatencyTracker
 from app.voice.session import VoiceSession, VoiceSessionState
 from app.voice.security import VoiceSecurity, MAX_TTS_TEXT_CHARS
@@ -107,13 +110,55 @@ class TextToSpeechService:
             session.check_cancelled()
 
         # 3. Provider Invocation with Timeout
+        #
+        # Model loading is not synthesis and must not be charged to the
+        # synthesis budget. A cold local engine takes far longer to load than
+        # any line takes to speak (~67 s measured for Kokoro on CPU against a
+        # 30 s floor here), so the first request of a process used to time out,
+        # answer with something other than the interviewer's voice, and only
+        # then leave a warm engine behind for the next line -- which is exactly
+        # how one session ended up with two voices. Waiting for readiness first
+        # means the timeout below measures only the work it was sized for.
         tracker.start_stage("tts")
-        tts_provider = AIFactory.get_tts_provider()
+        # enable_fallback=False: the mock TTS emits a 440 Hz tone, and a tone
+        # served under HTTP 200 is a failure the caller cannot see. On the
+        # interview path that means the interviewer's voice is replaced without
+        # anything reporting it, which is the substitution this service exists
+        # to prevent. A real failure is raised so the caller can retry or say so.
+        tts_provider = AIFactory.get_tts_provider(enable_fallback=False)
+
+        # Providers are not required to have a warm-up step; only the local
+        # engines do. Awaiting whatever the attribute returns, rather than
+        # assuming it is a coroutine, keeps this working for providers (and
+        # test doubles) where the name exists but means something else.
+        ensure_ready = getattr(tts_provider, "ensure_ready", None)
+        if callable(ensure_ready):
+            pending = ensure_ready()
+            if inspect.isawaitable(pending):
+                await pending
+
+        effective_voice = voice_id or "default"
+
+        async def _produce() -> bytes:
+            # Wait for a free inference slot before starting the clock, for the
+            # same reason readiness is awaited first: queueing behind another
+            # candidate is not this synthesis taking too long. Charging the
+            # queue to the timeout would mean that the busier the server got,
+            # the more lines failed -- and a failed line is a line the
+            # interviewer does not speak.
+            async with _inference_slot(tts_provider):
+                return await asyncio.wait_for(
+                    tts_provider.synthesize_speech(clean_text, voice_id=effective_voice),
+                    timeout=timeout_seconds
+                )
 
         try:
-            audio_bytes = await asyncio.wait_for(
-                tts_provider.synthesize_speech(clean_text, voice_id=voice_id or "default"),
-                timeout=timeout_seconds
+            # One synthesis per distinct line: the countdown pre-synthesis, the
+            # room's own request for the same question, a retry and a "listen
+            # again" all collapse onto a single job instead of running Kokoro
+            # several times over for identical audio.
+            audio_bytes = await tts_cache.synthesize_once(
+                clean_text, effective_voice, _produce
             )
         except asyncio.TimeoutError as e:
             if session:
@@ -122,6 +167,10 @@ class TextToSpeechService:
         except VoiceCancelledError:
             if session:
                 session.transition_to(VoiceSessionState.CANCELLED)
+            raise
+        except (TTSError, TTSTimeoutError, TTSProviderError):
+            if session:
+                session.transition_to(VoiceSessionState.FAILED)
             raise
         except Exception as e:
             if session:

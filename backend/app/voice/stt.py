@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional
 
 from app.ai.factory import AIFactory
 from app.voice.audio import AudioValidator
+from app.voice.concurrency import inference_slot as _inference_slot
 from app.voice.latency import LatencyTracker
 from app.voice.session import VoiceSession, VoiceSessionState
 from app.voice.security import VoiceSecurity
@@ -121,24 +122,28 @@ class SpeechToTextService:
         tracker.start_stage("stt")
         stt_provider = AIFactory.get_stt_provider()
         
-        try:
-            res = await asyncio.wait_for(
-                stt_provider.transcribe_audio(audio_bytes, filename=metadata.filename),
-                timeout=timeout_seconds
-            )
-        except asyncio.TimeoutError as e:
-            if session:
-                session.transition_to(VoiceSessionState.FAILED)
-            raise STTTimeoutError(f"STT provider request timed out after {timeout_seconds} seconds.", raw_error=e)
-        except VoiceCancelledError:
-            if session:
-                session.transition_to(VoiceSessionState.CANCELLED)
-            raise
-        except Exception as e:
-            if session:
-                session.transition_to(VoiceSessionState.FAILED)
-            clean_msg = VoiceSecurity.mask_secrets(str(e))
-            raise STTProviderError(f"STT provider failed: {clean_msg}", raw_error=e)
+        # Queue for a transcription slot before the clock starts. Waiting behind
+        # another candidate is not this transcription running long, and charging
+        # the queue to the timeout would make load itself the cause of failures.
+        async with _inference_slot(stt_provider):
+            try:
+                res = await asyncio.wait_for(
+                    stt_provider.transcribe_audio(audio_bytes, filename=metadata.filename),
+                    timeout=timeout_seconds
+                )
+            except asyncio.TimeoutError as e:
+                if session:
+                    session.transition_to(VoiceSessionState.FAILED)
+                raise STTTimeoutError(f"STT provider request timed out after {timeout_seconds} seconds.", raw_error=e)
+            except VoiceCancelledError:
+                if session:
+                    session.transition_to(VoiceSessionState.CANCELLED)
+                raise
+            except Exception as e:
+                if session:
+                    session.transition_to(VoiceSessionState.FAILED)
+                clean_msg = VoiceSecurity.mask_secrets(str(e))
+                raise STTProviderError(f"STT provider failed: {clean_msg}", raw_error=e)
 
         stt_latency = tracker.stop_stage("stt")
 

@@ -17,6 +17,11 @@ import {
   Radio
 } from "lucide-react";
 import { getStoredToken } from "@/lib/auth";
+import {
+  fetchInterviewerAudioWithRetry,
+  getCachedInterviewerAudio,
+  armInterviewAudio
+} from "@/lib/tts";
 
 // Standard 16kHz mono WAV encoder for zero-dependency universal speech decoding
 function encodePCMToWAV(samples: Float32Array, sampleRate: number = 16000): Blob {
@@ -159,12 +164,14 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
   const animationFrameRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const lastSpokenQuestionRef = useRef<string>("");
+  // The exact line spoken for this turn (reaction + question). Replays use it
+  // so they hit the clip already cached instead of synthesising the bare
+  // question as a second, different line.
+  const spokenLineRef = useRef<string>("");
   const questionIdAtSubmitRef = useRef<number | null>(null);
 
-  // SINGLE-AUDIO-OWNER CONTROLLER & PROMISE REFS
+  // SINGLE-AUDIO-OWNER CONTROLLER
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
-  const cachedAudioMapRef = useRef<{ [text: string]: string }>({});
-  const ttsFetchPromiseMapRef = useRef<{ [text: string]: Promise<string | null> }>({});
 
   // VAD & Barge-in Tracking Refs
   const speechStartTimeRef = useRef<number>(0);
@@ -175,9 +182,6 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
 
   // Clean up any ongoing interviewer audio
   const stopCurrentInterviewerAudio = () => {
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-    }
     if (currentAudioRef.current) {
       try {
         currentAudioRef.current.onplay = null;
@@ -216,70 +220,22 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
     setAudioLevel(0);
   };
 
+  // The interviewer audio cache is session-scoped (@/lib/tts) and deliberately
+  // outlives this room: a coding turn unmounts it and the interview resumes
+  // afterwards, so revoking every clip here would re-synthesise lines already
+  // spoken.
   useEffect(() => {
     return () => {
       stopCurrentInterviewerAudio();
       stopMicrophone();
-      Object.values(cachedAudioMapRef.current).forEach((url) => {
-        try {
-          URL.revokeObjectURL(url);
-        } catch (e) {}
-      });
-      cachedAudioMapRef.current = {};
-      ttsFetchPromiseMapRef.current = {};
+      // Let a remount speak the (already cached) line it just stopped.
+      lastSpokenQuestionRef.current = "";
     };
   }, []);
 
-  // Fetch or retrieve cached Kokoro TTS audio with in-flight deduplication
-  // Fetch or retrieve cached Kokoro TTS audio with in-flight deduplication
-  const fetchTTSAudio = async (text: string): Promise<string | null> => {
-    if (!text || !text.trim()) return null;
-    if (typeof window !== "undefined" && (window as any).__TTS_AUDIO_CACHE__?.[text]) {
-      return (window as any).__TTS_AUDIO_CACHE__[text];
-    }
-    if (cachedAudioMapRef.current[text]) {
-      return cachedAudioMapRef.current[text];
-    }
-    if (ttsFetchPromiseMapRef.current[text]) {
-      return ttsFetchPromiseMapRef.current[text];
-    }
-
-    const promise = (async () => {
-      try {
-        const token = getStoredToken();
-        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1";
-        const res = await fetch(`${baseUrl}/voice/tts`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({ text })
-        });
-        if (res.ok) {
-          const audioBlob = await res.blob();
-          if (audioBlob && audioBlob.size > 0) {
-            const audioUrl = URL.createObjectURL(audioBlob);
-            cachedAudioMapRef.current[text] = audioUrl;
-            if (typeof window !== "undefined") {
-              (window as any).__TTS_AUDIO_CACHE__ = (window as any).__TTS_AUDIO_CACHE__ || {};
-              (window as any).__TTS_AUDIO_CACHE__[text] = audioUrl;
-            }
-            return audioUrl;
-          }
-        }
-        return null;
-      } catch (e) {
-        console.warn("Kokoro TTS synthesis error:", e);
-        return null;
-      } finally {
-        delete ttsFetchPromiseMapRef.current[text];
-      }
-    })();
-
-    ttsFetchPromiseMapRef.current[text] = promise;
-    return promise;
-  };
+  // Interviewer audio comes from the session-wide cache in @/lib/tts, so the
+  // pre-synthesis started during the countdown and the request this room would
+  // otherwise make for the same line are one request, in one voice.
 
   // Play audio url via single audio owner controller
   const playAudioUrl = async (audioUrl: string, text: string) => {
@@ -307,8 +263,8 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
     };
 
     audio.onerror = (e) => {
-      console.warn("Audio playback error, falling back to Web Speech API:", e);
-      speakWithBrowserSpeech(text);
+      console.warn("Interviewer audio playback error:", e);
+      handleInterviewerAudioUnavailable();
     };
 
     try {
@@ -318,29 +274,30 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
         startBargeInListener();
       }
     } catch (playErr: unknown) {
-      console.warn("Audio play rejected, attempting browser speech synthesis:", playErr);
-      speakWithBrowserSpeech(text);
+      // This clip was stopped on purpose, not refused by the browser.
+      if (currentAudioRef.current !== audio) return;
+      // Playback was refused, almost always because the document has not been
+      // interacted with yet. The audio is already synthesised and correct, so
+      // ask for the gesture and play this same clip -- never re-speak the line
+      // through a different voice.
+      console.warn("Interviewer audio play rejected; awaiting user gesture:", playErr);
+      setVoiceState("audio_blocked");
     }
   };
 
   // Speak a line as the interviewer.
   //
-  // ONE voice owns the whole session. Previously the first question played
-  // pre-fetched Kokoro audio (a female voice) while every later question fired
-  // the browser's Web Speech API immediately -- which on Windows defaults to a
-  // male SAPI voice -- and only cached Kokoro in the background. The result was
-  // an interviewer who changed gender between question one and question two.
-  // Server TTS is now always awaited, and the browser synthesiser is a genuine
-  // failure path rather than the normal one.
+  // ONE voice owns the whole session, and there is no second voice to fall back
+  // to. A line that cannot be synthesised is retried in the same voice; if it
+  // still cannot be, the room says so and lets the candidate carry on reading
+  // the question rather than hearing a different interviewer for one turn.
   const speakQuestion = async (text: string) => {
     if (!text || !text.trim()) return;
 
     stopCurrentInterviewerAudio();
     setErrorMessage(null);
 
-    const cachedUrl =
-      (typeof window !== "undefined" && (window as any).__TTS_AUDIO_CACHE__?.[text]) ||
-      cachedAudioMapRef.current[text];
+    const cachedUrl = getCachedInterviewerAudio(text);
     if (cachedUrl) {
       await playAudioUrl(cachedUrl, text);
       return;
@@ -351,18 +308,26 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
     setActiveSubtitleText(text);
     setVoiceState("tts_loading");
 
-    try {
-      const audioUrl = await fetchTTSAudio(text);
-      if (audioUrl) {
-        await playAudioUrl(audioUrl, text);
-        return;
-      }
-    } catch (err) {
-      console.warn("Interviewer TTS synthesis failed, using browser speech:", err);
+    const audioUrl = await fetchInterviewerAudioWithRetry(text);
+    if (audioUrl) {
+      await playAudioUrl(audioUrl, text);
+      return;
     }
 
-    // Server TTS unavailable. Browser speech keeps the interview running.
-    speakWithBrowserSpeech(text);
+    handleInterviewerAudioUnavailable();
+  };
+
+  // Server TTS could not produce this line even after a retry. Keep the turn
+  // moving on the written question instead of substituting another voice.
+  const handleInterviewerAudioUnavailable = () => {
+    setErrorMessage(
+      "Interviewer audio is temporarily unavailable. The question is shown above — you can answer now, or retry the audio."
+    );
+    if (isConcluding) {
+      onConclusionFinished?.();
+    } else {
+      transitionToListening();
+    }
   };
 
   // Automatically speak the active question ONCE when it becomes active.
@@ -383,110 +348,21 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
     // person does, instead of firing the next item into silence.
     const ack = (interviewerAck || "").trim();
     const spokenLine = ack ? `${ack} ${currentQuestionText}` : currentQuestionText;
+    spokenLineRef.current = spokenLine;
 
     setActiveSubtitleText(spokenLine);
     speakQuestion(spokenLine);
   }, [currentQuestionId, currentQuestionText]);
 
-  // Chrome populates getVoices() asynchronously and returns [] on the first
-  // call, so the opening line used to be spoken by whatever the OS default was
-  // (a male voice on Windows) while later lines picked a different voice from
-  // the by-then-loaded list. Priming the list once and pinning a single voice
-  // for the session keeps the interviewer sounding like one person.
-  const pinnedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    const prime = () => {
-      pinnedVoiceRef.current = null;
-      resolveBrowserVoice();
-    };
-    prime();
-    window.speechSynthesis.addEventListener?.("voiceschanged", prime);
-    return () => window.speechSynthesis.removeEventListener?.("voiceschanged", prime);
-  }, []);
-
-  // Kokoro's default interviewer voice (af_heart) is female, so the browser
-  // fallback prefers a female English voice too. Falling back mid-session then
-  // changes the audio quality, never the person.
-  const resolveBrowserVoice = (): SpeechSynthesisVoice | null => {
-    if (pinnedVoiceRef.current) return pinnedVoiceRef.current;
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
-
-    const voices = window.speechSynthesis.getVoices();
-    if (!voices || voices.length === 0) return null;
-
-    const english = voices.filter((v) => v.lang && v.lang.toLowerCase().startsWith("en"));
-    if (english.length === 0) return null;
-
-    const FEMALE_HINTS = ["zira", "aria", "jenny", "michelle", "samantha", "female", "eva", "libby", "sonia"];
-    const isFemale = (v: SpeechSynthesisVoice) =>
-      FEMALE_HINTS.some((h) => v.name.toLowerCase().includes(h));
-    const isHighQuality = (v: SpeechSynthesisVoice) =>
-      /natural|neural|google/i.test(v.name);
-
-    const chosen =
-      english.find((v) => isFemale(v) && isHighQuality(v)) ||
-      english.find(isFemale) ||
-      english.find(isHighQuality) ||
-      english[0];
-
-    pinnedVoiceRef.current = chosen || null;
-    return pinnedVoiceRef.current;
-  };
-
-  // Browser Native Web Speech API fallback
-  const speakWithBrowserSpeech = (text: string) => {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-      if (isConcluding) {
-        onConclusionFinished?.();
-      } else {
-        transitionToListening();
-      }
-      return;
-    }
-
-    try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
-
-      const preferredVoice = resolveBrowserVoice();
-      if (preferredVoice) utterance.voice = preferredVoice;
-
-      utterance.onstart = () => {
-        setActiveSubtitleText(text);
-        setVoiceState("ai_speaking");
-        if (!isConcluding) startBargeInListener();
-      };
-
-      utterance.onend = () => {
-        if (isConcluding) {
-          onConclusionFinished?.();
-        } else {
-          transitionToListening();
-        }
-      };
-
-      utterance.onerror = () => {
-        if (isConcluding) {
-          onConclusionFinished?.();
-        } else {
-          transitionToListening();
-        }
-      };
-
-      window.speechSynthesis.speak(utterance);
-    } catch (e) {
-      console.warn("Web Speech API error:", e);
-      if (isConcluding) {
-        onConclusionFinished?.();
-      } else {
-        transitionToListening();
-      }
-    }
-  };
+  // There is deliberately no Web Speech API path here any more.
+  //
+  // The browser synthesiser was reached whenever server TTS failed or playback
+  // was refused, and it speaks in a different voice -- on Windows a male one by
+  // default, because Chrome returns [] from getVoices() on the first call and
+  // the opening line got the OS default. That turned a one-line audio failure
+  // into an interviewer who changed person mid-session. A line that cannot be
+  // spoken in the interviewer's own voice is now retried, or reported, but
+  // never spoken by someone else.
 
   // Background microphone to monitor for candidate barge-in during AI speaking
   const startBargeInListener = async () => {
@@ -538,9 +414,6 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
           bargeInSpeechDurationRef.current += delta;
           if (bargeInSpeechDurationRef.current >= BARGE_IN_TRIGGER_MS) {
             stopCurrentInterviewerAudio();
-            if (typeof window !== "undefined" && "speechSynthesis" in window) {
-              window.speechSynthesis.cancel();
-            }
             transitionToListening(true);
             return;
           }
@@ -849,6 +722,8 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
   }, [voiceState, processingPhase]);
 
   const handleUnblockAudio = async () => {
+    // Runs inside a click, so it is the gesture the browser was waiting for.
+    await armInterviewAudio();
     try {
       if (audioContextRef.current && audioContextRef.current.state === "suspended") {
         await audioContextRef.current.resume();
@@ -861,13 +736,13 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
         await currentAudioRef.current.play();
       } catch (err) {
         if (currentQuestionText) {
-          speakQuestion(currentQuestionText);
+          speakQuestion(spokenLineRef.current || currentQuestionText);
         } else {
           transitionToListening();
         }
       }
     } else if (currentQuestionText) {
-      speakQuestion(currentQuestionText);
+      speakQuestion(spokenLineRef.current || currentQuestionText);
     }
   };
 
@@ -887,7 +762,7 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
     }
 
     stopCurrentInterviewerAudio();
-    speakQuestion(currentQuestionText);
+    speakQuestion(spokenLineRef.current || currentQuestionText);
   };
 
   return (
@@ -1197,7 +1072,11 @@ export const VoiceInterviewRoom: React.FC<VoiceInterviewRoomProps> = ({
                     boxShadow: "0 4px 14px rgba(99, 102, 241, 0.4)"
                   }}
                 >
-                  <Play size={18} /> Start Interview
+                  {/* Not a second start: the interview is already running and
+                      this only re-asks the browser for playback permission. It
+                      used to say "Start Interview", which read as a second
+                      Begin button after the one on the preparation screen. */}
+                  <Play size={18} /> Enable Interviewer Audio
                 </button>
               )}
 

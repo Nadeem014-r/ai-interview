@@ -125,10 +125,10 @@ function ConfigureInterviewContent() {
   return (
     <div style={{ maxWidth: "680px", margin: "0 auto" }}>
       <div style={{ marginBottom: "1.5rem" }}>
-        <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "#09090b", letterSpacing: "-0.02em", margin: 0 }}>
+        <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em", margin: 0 }}>
           Configure Interview Session
         </h2>
-        <p style={{ color: "#71717a", fontSize: "0.85rem", marginTop: "0.2rem" }}>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: "0.2rem" }}>
           Review your target selection, role fit analysis, and choose interview duration.
         </p>
       </div>
@@ -137,20 +137,20 @@ function ConfigureInterviewContent() {
         <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
           {/* Read-Only Selected Company & Role */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-            <div style={{ padding: "0.85rem 1rem", backgroundColor: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.72rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem" }}>
-                <Building2 size={13} color="#64748b" /> Target Company
+            <div style={{ padding: "0.85rem 1rem", backgroundColor: "var(--bg-subtle)", border: "1px solid var(--border-subtle)", borderRadius: "10px" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.72rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem" }}>
+                <Building2 size={13} color="var(--text-muted)" /> Target Company
               </span>
-              <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b" }}>
+              <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)" }}>
                 {selectedCompany?.name || (fetchingData ? "Loading..." : "Selected Company")}
               </div>
             </div>
 
-            <div style={{ padding: "0.85rem 1rem", backgroundColor: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.72rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem" }}>
-                <Briefcase size={13} color="#64748b" /> Target Role
+            <div style={{ padding: "0.85rem 1rem", backgroundColor: "var(--bg-subtle)", border: "1px solid var(--border-subtle)", borderRadius: "10px" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.72rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem" }}>
+                <Briefcase size={13} color="var(--text-muted)" /> Target Role
               </span>
-              <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b" }}>
+              <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)" }}>
                 {selectedRole?.title ? `${selectedRole.title}${selectedRole.level ? ` (${selectedRole.level})` : ""}` : (fetchingData ? "Loading..." : "Selected Role")}
               </div>
             </div>
@@ -160,21 +160,21 @@ function ConfigureInterviewContent() {
           {matchData && (
             <div
               style={{
-                backgroundColor: "#f8fafc",
-                border: "1px solid #e2e8f0",
+                backgroundColor: "var(--bg-subtle)",
+                border: "1px solid var(--border-subtle)",
                 borderRadius: "10px",
                 padding: "1rem 1.15rem"
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem" }}>
-                <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "#09090b" }}>
+                <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-primary)" }}>
                   Role Fit Analysis: {matchData.role_title}
                 </span>
                 <span
                   style={{
-                    backgroundColor: matchData.overall_score >= 70 ? "#ecfdf5" : matchData.overall_score > 0 ? "#ede9fe" : "#f4f4f5",
-                    color: matchData.overall_score >= 70 ? "#059669" : matchData.overall_score > 0 ? "#6366f1" : "#71717a",
-                    border: `1px solid ${matchData.overall_score >= 70 ? "#a7f3d0" : matchData.overall_score > 0 ? "#ddd6fe" : "#e4e4e7"}`,
+                    backgroundColor: matchData.overall_score >= 70 ? "var(--accent-emerald-light)" : matchData.overall_score > 0 ? "var(--accent-brand-light)" : "var(--bg-subtle)",
+                    color: matchData.overall_score >= 70 ? "var(--accent-emerald)" : matchData.overall_score > 0 ? "var(--accent-brand)" : "var(--text-muted)",
+                    border: `1px solid ${matchData.overall_score >= 70 ? "rgba(52, 211, 153, 0.32)" : matchData.overall_score > 0 ? "rgba(139, 125, 255, 0.28)" : "var(--border-subtle)"}`,
                     padding: "0.15rem 0.5rem",
                     borderRadius: "6px",
                     fontSize: "0.75rem",
@@ -187,9 +187,9 @@ function ConfigureInterviewContent() {
 
               {matchData.what_you_have && matchData.what_you_have.length > 0 && (
                 <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexWrap: "wrap", fontSize: "0.76rem", marginBottom: "0.4rem" }}>
-                  <strong style={{ color: "#059669" }}>✓ You have:</strong>
+                  <strong style={{ color: "var(--accent-emerald)" }}>✓ You have:</strong>
                   {matchData.what_you_have.map((item: string, idx: number) => (
-                    <span key={idx} className="badge" style={{ backgroundColor: "#ecfdf5", color: "#059669", border: "1px solid #a7f3d0", fontSize: "0.72rem" }}>
+                    <span key={idx} className="badge" style={{ backgroundColor: "var(--accent-emerald-light)", color: "var(--accent-emerald)", border: "1px solid rgba(52, 211, 153, 0.32)", fontSize: "0.72rem" }}>
                       {item}
                     </span>
                   ))}
@@ -198,9 +198,9 @@ function ConfigureInterviewContent() {
 
               {matchData.what_you_are_missing && matchData.what_you_are_missing.length > 0 && (
                 <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexWrap: "wrap", fontSize: "0.76rem" }}>
-                  <strong style={{ color: "#dc2626" }}>✕ Missing:</strong>
+                  <strong style={{ color: "var(--accent-rose)" }}>✕ Missing:</strong>
                   {matchData.what_you_are_missing.map((item: string, idx: number) => (
-                    <span key={idx} className="badge" style={{ backgroundColor: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", fontSize: "0.72rem" }}>
+                    <span key={idx} className="badge" style={{ backgroundColor: "var(--accent-rose-light)", color: "var(--accent-rose)", border: "1px solid rgba(251, 113, 133, 0.32)", fontSize: "0.72rem" }}>
                       {item}
                     </span>
                   ))}
@@ -211,7 +211,7 @@ function ConfigureInterviewContent() {
 
           {/* Duration */}
           <div>
-            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.35rem" }}>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.35rem" }}>
               Duration (Minutes)
             </label>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.5rem" }}>
@@ -225,9 +225,9 @@ function ConfigureInterviewContent() {
                     style={{
                       padding: "0.6rem 0.5rem",
                       borderRadius: "8px",
-                      border: `1px solid ${selected ? "#09090b" : "#e4e4e7"}`,
-                      backgroundColor: selected ? "#09090b" : "#ffffff",
-                      color: selected ? "#ffffff" : "#52525b",
+                      border: `1px solid ${selected ? "#6d5cff" : "var(--border-subtle)"}`,
+                      backgroundColor: selected ? "#6d5cff" : "rgba(255, 255, 255, 0.04)",
+                      color: selected ? "#ffffff" : "var(--text-secondary)",
                       fontSize: "0.825rem",
                       fontWeight: selected ? 600 : 500,
                       cursor: "pointer",
@@ -245,8 +245,8 @@ function ConfigureInterviewContent() {
           {!isEligible ? (
             <div
               style={{
-                backgroundColor: "#fffbeb",
-                border: "1px solid #fde68a",
+                backgroundColor: "var(--accent-amber-light)",
+                border: "1px solid rgba(251, 191, 36, 0.32)",
                 borderRadius: "10px",
                 padding: "1rem 1.15rem",
                 display: "flex",
@@ -254,10 +254,10 @@ function ConfigureInterviewContent() {
                 gap: "0.6rem"
               }}
             >
-              <div style={{ fontWeight: 700, fontSize: "0.88rem", color: "#92400e" }}>
+              <div style={{ fontWeight: 700, fontSize: "0.88rem", color: "var(--accent-amber)" }}>
                 Your profile needs a little more information
               </div>
-              <p style={{ fontSize: "0.825rem", color: "#78350f", margin: 0, lineHeight: 1.45 }}>
+              <p style={{ fontSize: "0.825rem", color: "var(--accent-amber)", margin: 0, lineHeight: 1.45 }}>
                 To create a meaningful role-specific interview, we need more evidence from your resume. Add a few technical skills, projects, or relevant experience and try again.
               </p>
               <div>
@@ -268,7 +268,7 @@ function ConfigureInterviewContent() {
                     display: "inline-flex",
                     fontSize: "0.825rem",
                     padding: "0.45rem 1rem",
-                    backgroundColor: "#b45309",
+                    backgroundColor: "var(--accent-amber)",
                     color: "#ffffff"
                   }}
                 >

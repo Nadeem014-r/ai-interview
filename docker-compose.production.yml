@@ -17,14 +17,34 @@ services:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-appuser}:${POSTGRES_PASSWORD:-apppassword}@postgres:5432/${POSTGRES_DB:-ai_interviewer}
       - REDIS_URL=redis://redis:6379/0
       - USE_REDIS=true
-      - STORAGE_LOCAL_PATH=/app/data/storage
+      # STORAGE_TYPE / UPLOAD_DIR are the names the app actually reads
+      # (app/core/config.py; app/api/v1/resume.py writes under UPLOAD_DIR).
+      # This used to set STORAGE_LOCAL_PATH, which nothing reads -- so uploads
+      # kept going to the image's own ./data/uploads while the volume below sat
+      # empty, and every resume a candidate uploaded was lost on restart.
+      - STORAGE_TYPE=local
+      - UPLOAD_DIR=/app/data/storage/uploads
       - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_DEFAULT_MODEL=${GEMINI_DEFAULT_MODEL:-gemini-3.5-flash-lite}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
+      # Local CPU inference bounds and interviewer voice: see .env.example.
+      - INTERVIEWER_VOICE_ID=${INTERVIEWER_VOICE_ID:-en_us_female_senior}
+      - TTS_MAX_CONCURRENCY=${TTS_MAX_CONCURRENCY:-2}
+      - STT_MAX_CONCURRENCY=${STT_MAX_CONCURRENCY:-2}
+      - ENABLE_BACKGROUND_SCRAPER=${ENABLE_BACKGROUND_SCRAPER:-false}
     volumes:
       - storage_data:/app/data/storage
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/readiness', timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # Local voice models are warmed at boot; do not fail the container while
+      # that is still happening.
+      start_period: 180s
     depends_on:
       postgres:
         condition: service_healthy

@@ -51,9 +51,21 @@ export default function ProfilePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSaving(true);
     setSuccessMsg("");
     setErrorMsg("");
+
+    // Rejected, never corrected: silently turning -0.5 into 0 would save a
+    // number the candidate never entered. The backend enforces the same rule.
+    const yearsValue =
+      profile.experience_years === undefined || profile.experience_years === null
+        ? undefined
+        : Number(profile.experience_years);
+    if (yearsValue !== undefined && (Number.isNaN(yearsValue) || yearsValue < 0)) {
+      setErrorMsg("Years of experience cannot be negative. Enter 0 or more.");
+      return;
+    }
+
+    setSaving(true);
 
     try {
       const skillsArray = skillsStr
@@ -65,7 +77,8 @@ export default function ProfilePage() {
         ...profile,
         skills: skillsArray,
         graduation_year: profile.graduation_year ? Number(profile.graduation_year) : undefined,
-        experience_years: profile.experience_years ? Number(profile.experience_years) : undefined
+        // Sent as-is: `0` is a valid answer and a truthiness check used to drop it.
+        experience_years: yearsValue
       };
 
       await apiRequest("/profile", {
@@ -85,22 +98,22 @@ export default function ProfilePage() {
     <WorkspaceLayout sectionTitle="Settings" sectionSubtitle="Personal, academic, and interview preparation preferences">
       <div style={{ maxWidth: "800px" }}>
         <div style={{ marginBottom: "1.5rem" }}>
-          <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "#09090b", letterSpacing: "-0.02em", margin: 0 }}>
+          <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em", margin: 0 }}>
             Account & Placement Profile Settings
           </h2>
-          <p style={{ color: "#71717a", fontSize: "0.85rem", marginTop: "0.2rem" }}>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: "0.2rem" }}>
             Update your academic background and preferred engineering domains to improve question tailoring.
           </p>
         </div>
 
         {successMsg && (
-          <div style={{ padding: "0.65rem 1rem", backgroundColor: "var(--accent-emerald-light)", border: "1px solid #a7f3d0", borderRadius: "8px", color: "var(--accent-emerald)", fontSize: "0.85rem", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.45rem" }}>
+          <div style={{ padding: "0.65rem 1rem", backgroundColor: "var(--accent-emerald-light)", border: "1px solid rgba(52, 211, 153, 0.32)", borderRadius: "8px", color: "var(--accent-emerald)", fontSize: "0.85rem", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.45rem" }}>
             <CheckCircle2 size={15} /> {successMsg}
           </div>
         )}
 
         {errorMsg && (
-          <div style={{ padding: "0.65rem 1rem", backgroundColor: "var(--accent-rose-light)", border: "1px solid #fecdd3", borderRadius: "8px", color: "var(--accent-rose)", fontSize: "0.85rem", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.45rem" }}>
+          <div style={{ padding: "0.65rem 1rem", backgroundColor: "var(--accent-rose-light)", border: "1px solid rgba(251, 113, 133, 0.32)", borderRadius: "8px", color: "var(--accent-rose)", fontSize: "0.85rem", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.45rem" }}>
             <AlertCircle size={15} /> {errorMsg}
           </div>
         )}
@@ -108,12 +121,12 @@ export default function ProfilePage() {
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
           {/* Personal Information */}
           <div className="saas-card" style={{ padding: "1.5rem" }}>
-            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "1rem" }}>
+            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "1rem" }}>
               Personal Details
             </h3>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
               <div>
-                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Full Name</label>
+                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.3rem" }}>Full Name</label>
                 <input
                   type="text"
                   required
@@ -123,13 +136,13 @@ export default function ProfilePage() {
                 />
               </div>
               <div>
-                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Email Address</label>
+                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.3rem" }}>Email Address</label>
                 <input
                   type="email"
                   disabled
                   value={profile.email || ""}
                   className="form-input"
-                  style={{ backgroundColor: "#f4f4f5", cursor: "not-allowed" }}
+                  style={{ backgroundColor: "var(--bg-subtle)", cursor: "not-allowed" }}
                 />
               </div>
             </div>
@@ -137,12 +150,12 @@ export default function ProfilePage() {
 
           {/* Academic Credentials */}
           <div className="saas-card" style={{ padding: "1.5rem" }}>
-            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "1rem" }}>
+            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "1rem" }}>
               Academic Background
             </h3>
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
               <div>
-                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>University / College</label>
+                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.3rem" }}>University / College</label>
                 <input
                   type="text"
                   value={profile.university || ""}
@@ -152,7 +165,7 @@ export default function ProfilePage() {
                 />
               </div>
               <div>
-                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Graduation Year</label>
+                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.3rem" }}>Graduation Year</label>
                 <input
                   type="number"
                   value={profile.graduation_year || ""}
@@ -163,7 +176,7 @@ export default function ProfilePage() {
               </div>
             </div>
             <div>
-              <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Degree Program</label>
+              <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.3rem" }}>Degree Program</label>
               <input
                 type="text"
                 value={profile.degree || ""}
@@ -176,12 +189,12 @@ export default function ProfilePage() {
 
           {/* Technical Alignment & Skills */}
           <div className="saas-card" style={{ padding: "1.5rem" }}>
-            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "1rem" }}>
+            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "1rem" }}>
               Technical Alignment
             </h3>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
               <div>
-                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Target Role Title</label>
+                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.3rem" }}>Target Role Title</label>
                 <input
                   type="text"
                   value={profile.target_role || ""}
@@ -191,10 +204,15 @@ export default function ProfilePage() {
                 />
               </div>
               <div>
-                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Years of Experience</label>
+                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.3rem" }}>Years of Experience</label>
+                {/* Half-years are meaningful, negative years are not. `min`
+                    blocks the spinner from stepping below zero; the submit
+                    handler rejects a typed or pasted negative rather than
+                    quietly rounding it up. */}
                 <input
                   type="number"
                   step="0.5"
+                  min="0"
                   value={profile.experience_years ?? ""}
                   onChange={(e) => setProfile({ ...profile, experience_years: e.target.value ? Number(e.target.value) : undefined })}
                   className="form-input"
@@ -204,7 +222,7 @@ export default function ProfilePage() {
             </div>
 
             <div>
-              <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#52525b", marginBottom: "0.3rem" }}>Core Skills (comma separated)</label>
+              <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.3rem" }}>Core Skills (comma separated)</label>
               <input
                 type="text"
                 value={skillsStr}
@@ -217,7 +235,7 @@ export default function ProfilePage() {
 
           {/* Bio */}
           <div className="saas-card" style={{ padding: "1.5rem" }}>
-            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "1rem" }}>
+            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "1rem" }}>
               Professional Summary
             </h3>
             <textarea
@@ -231,7 +249,7 @@ export default function ProfilePage() {
 
           {/* Extracted Projects */}
           <div className="saas-card" style={{ padding: "1.5rem" }}>
-            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "0.75rem" }}>
+            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.75rem" }}>
               Projects
             </h3>
             {profile.projects && profile.projects.length > 0 ? (
@@ -239,15 +257,15 @@ export default function ProfilePage() {
                 {profile.projects.map((proj: any, idx: number) => {
                   const title = typeof proj === "string" ? proj : (proj.title || proj.name || proj.heading || proj.project_name || `Project ${idx + 1}`);
                   return (
-                    <li key={idx} style={{ fontSize: "0.85rem", color: "#09090b", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                      <span style={{ color: "#71717a", fontSize: "0.75rem" }}>•</span>
+                    <li key={idx} style={{ fontSize: "0.85rem", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <span style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>•</span>
                       <strong>{title}</strong>
                     </li>
                   );
                 })}
               </ul>
             ) : (
-              <p style={{ color: "#71717a", fontSize: "0.825rem", margin: 0 }}>
+              <p style={{ color: "var(--text-muted)", fontSize: "0.825rem", margin: 0 }}>
                 No projects extracted from resume yet.
               </p>
             )}
@@ -255,7 +273,7 @@ export default function ProfilePage() {
 
           {/* Extracted Experience */}
           <div className="saas-card" style={{ padding: "1.5rem" }}>
-            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "0.75rem" }}>
+            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.75rem" }}>
               Experience
             </h3>
             {profile.experience && profile.experience.length > 0 ? (
@@ -265,15 +283,15 @@ export default function ProfilePage() {
                     ? exp
                     : `${exp.role || exp.title || "Role"}${exp.company ? ` at ${exp.company}` : ""}${exp.duration ? ` (${exp.duration})` : ""}`;
                   return (
-                    <li key={idx} style={{ fontSize: "0.85rem", color: "#09090b", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                      <span style={{ color: "#71717a", fontSize: "0.75rem" }}>•</span>
+                    <li key={idx} style={{ fontSize: "0.85rem", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <span style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>•</span>
                       <strong>{headline}</strong>
                     </li>
                   );
                 })}
               </ul>
             ) : (
-              <p style={{ color: "#71717a", fontSize: "0.825rem", margin: 0 }}>
+              <p style={{ color: "var(--text-muted)", fontSize: "0.825rem", margin: 0 }}>
                 No experience extracted from resume yet.
               </p>
             )}

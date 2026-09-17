@@ -226,11 +226,21 @@ export default function DashboardPage() {
     return "Good evening";
   };
 
-  // FIX #3: Derive interview readiness strictly from candidate resume & match analysis
+  // These four numbers all come from the resume-to-role matcher, and none of
+  // them measures interview performance. `overall_score` is a weighted blend of
+  // how much of the target role's requirements the resume evidences;
+  // `skills_score` in particular is the share of the role's required skills
+  // found in the resume, so 100 % means "your resume covers every listed
+  // requirement", not "your technical skill is perfect". The maths below is
+  // left exactly as the matcher computes it -- only the labels changed, so the
+  // card claims what it actually measures.
   const highestMatch = matches.length > 0 ? matches[0] : null;
 
   const readinessScore = highestMatch ? Math.round(highestMatch.overall_score) : (hasResume ? 0 : null);
-  const readinessLabel = readinessScore !== null ? (readinessScore >= 75 ? "Strong" : readinessScore >= 60 ? "Good" : readinessScore > 0 ? "Early Stage" : "Needs Preparation") : "Pending";
+  // Describes the strength of the match, which is what the number is. It used
+  // to read "Strong" / "Needs Preparation", which sounded like a verdict on the
+  // candidate's interview readiness rather than on resume coverage.
+  const readinessLabel = readinessScore !== null ? (readinessScore >= 75 ? "Strong match" : readinessScore >= 60 ? "Good match" : readinessScore > 0 ? "Partial match" : "No match yet") : "Pending";
 
   // Real resume-derived breakdown scores (0% if no evidence exists)
   const techSkillScore = highestMatch?.breakdown?.skills_score != null ? Math.round(highestMatch.breakdown.skills_score) : 0;
@@ -246,8 +256,22 @@ export default function DashboardPage() {
     ? "Full Stack"
     : "Backend";
 
+  // When a completed interview actually happened is its end_time, not the
+  // created_at the card used to read -- created_at is when the session was
+  // configured, which can be days before it was sat. Sessions are ordered by
+  // created_at, so "most recent" is also resolved on completion time here.
+  const completionTimeOf = (s?: InterviewSession | null) =>
+    s ? s.end_time || s.created_at : undefined;
+
   // FIX #2: Retrieve actual score from the most recent completed interview
-  const latestCompletedSession = history.find((s) => s.status === "completed");
+  const latestCompletedSession = history
+    .filter((s) => s.status === "completed")
+    .reduce<InterviewSession | null>((latest, s) => {
+      if (!latest) return s;
+      const a = new Date(completionTimeOf(s) || 0).getTime();
+      const b = new Date(completionTimeOf(latest) || 0).getTime();
+      return a > b ? s : latest;
+    }, null);
   const hasCompletedInterview = !!latestCompletedSession;
   
   let latestExactScore: number | null = null;
@@ -267,24 +291,31 @@ export default function DashboardPage() {
 
   const latestRoleTitle = latestCompletedSession?.role_title || (history.length > 0 ? history[0].role_title : "Backend Technical");
   
-  // Format relative time helper
+  // Format relative time helper.
+  //
+  // The API now sends timestamps with an explicit UTC offset, so Date parses
+  // them against the viewer's own clock and no timezone is assumed here. A
+  // small negative difference (clock skew between server and browser) reads as
+  // "Just now" rather than as a time in the future.
   const getTimeAgo = (dateString?: string) => {
     if (!dateString) return "Recently";
-    try {
-      const date = new Date(dateString);
-      const now = new Date();
-      const diffMs = now.getTime() - date.getTime();
-      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-      if (diffHours < 1) return "Just now";
-      if (diffHours < 24) return `${diffHours}h ago`;
-      const diffDays = Math.floor(diffHours / 24);
-      return `${diffDays}d ago`;
-    } catch {
-      return "Recently";
-    }
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return "Recently";
+    const diffMs = Date.now() - date.getTime();
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+    if (diffMinutes < 1) return "Just now";
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
   };
 
-  const latestTimeAgo = latestCompletedSession?.created_at ? getTimeAgo(latestCompletedSession.created_at) : (history[0]?.created_at ? getTimeAgo(history[0].created_at) : "Recently");
+  const latestTimeAgo = completionTimeOf(latestCompletedSession)
+    ? getTimeAgo(completionTimeOf(latestCompletedSession))
+    : history[0]?.created_at
+    ? getTimeAgo(history[0].created_at)
+    : "Recently";
 
   // Readiness colour band, so the gauge reads at a glance instead of always
   // being brand indigo regardless of the score.
@@ -292,12 +323,12 @@ export default function DashboardPage() {
     readinessScore === null
       ? "#a1a1aa"
       : readinessScore >= 75
-      ? "#059669"
+      ? "var(--accent-emerald)"
       : readinessScore >= 60
-      ? "#4f46e5"
+      ? "var(--accent-brand)"
       : readinessScore > 0
-      ? "#d97706"
-      : "#a1a1aa";
+      ? "var(--accent-amber)"
+      : "var(--text-tertiary)";
 
   // Animated presentation of values that are already loaded from the API.
   const animatedReadiness = useCountUp(loading ? null : readinessScore);
@@ -412,7 +443,7 @@ export default function DashboardPage() {
             style={{
               padding: "0.75rem 1rem",
               backgroundColor: "var(--accent-rose-light)",
-              border: "1px solid #fecdd3",
+              border: "1px solid rgba(251, 113, 133, 0.32)",
               borderRadius: "10px",
               color: "var(--accent-rose)",
               fontSize: "0.85rem",
@@ -445,14 +476,14 @@ export default function DashboardPage() {
           }}
         >
           <div>
-            <div style={{ fontSize: "0.925rem", fontWeight: 600, color: "#09090b", marginBottom: "0.4rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+            <div style={{ fontSize: "0.925rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.4rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
               <span>{getGreeting()}, {firstName}.</span> <span>👋</span>
             </div>
             <h1
               style={{
                 fontSize: "2.35rem",
                 fontWeight: 800,
-                color: "#09090b",
+                color: "var(--text-primary)",
                 letterSpacing: "-0.035em",
                 lineHeight: 1.15,
                 margin: "0 0 0.65rem 0",
@@ -463,14 +494,14 @@ export default function DashboardPage() {
               }}
             >
               <span>Ready for your</span>{" "}
-              <span style={{ color: "#6366f1", position: "relative", display: "inline-flex", alignItems: "center" }}>
+              <span style={{ color: "var(--accent-brand)", position: "relative", display: "inline-flex", alignItems: "center" }}>
                 next interview?
                 <span
                   style={{
                     position: "absolute",
                     top: "-8px",
                     right: "-18px",
-                    color: "#6366f1",
+                    color: "var(--accent-brand)",
                     fontSize: "1.1rem",
                     lineHeight: 1
                   }}
@@ -479,7 +510,7 @@ export default function DashboardPage() {
                 </span>
               </span>
             </h1>
-            <p style={{ color: "#71717a", fontSize: "0.875rem", margin: 0, maxWidth: "600px", lineHeight: 1.5 }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.875rem", margin: 0, maxWidth: "600px", lineHeight: 1.5 }}>
               Your interview preparation, resume intelligence, and placement progress — all in one place.
             </p>
           </div>
@@ -488,7 +519,7 @@ export default function DashboardPage() {
           <button
             onClick={() => openInterviewModal()}
             style={{
-              backgroundColor: "#09090b",
+              backgroundColor: "#6d5cff",
               color: "#ffffff",
               border: "none",
               borderRadius: "10px",
@@ -499,7 +530,7 @@ export default function DashboardPage() {
               alignItems: "center",
               gap: "0.45rem",
               cursor: "pointer",
-              boxShadow: "0 2px 8px rgba(9, 9, 11, 0.12)",
+              boxShadow: "0 10px 26px -10px rgba(124, 92, 255, 0.85), 0 1px 0 rgba(255, 255, 255, 0.2) inset",
               transition: "all 0.15s ease",
               flexShrink: 0
             }}
@@ -512,12 +543,12 @@ export default function DashboardPage() {
 
         {/* Main AI Interview Hero Card */}
         <div
-          className="hover-elevate rise-in"
+          className="glass-card hover-elevate rise-in"
           style={{
-            backgroundColor: "#ffffff",
-            border: "1px solid #f1f1f4",
+            backgroundColor: "var(--bg-surface)",
+            border: "1px solid var(--border-subtle)",
             borderRadius: "20px",
-            boxShadow: "0 4px 20px -2px rgba(0, 0, 0, 0.03)",
+            boxShadow: "0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 26px 60px -24px rgba(0, 0, 0, 0.9)",
             padding: "2rem 2.75rem",
             marginBottom: "1.75rem",
             display: "flex",
@@ -560,8 +591,8 @@ export default function DashboardPage() {
                   width: "74px",
                   height: "14px",
                   borderRadius: "50%",
-                  background: "linear-gradient(180deg, #ede9fe 0%, #ddd6fe 100%)",
-                  boxShadow: "0 2px 6px rgba(124, 58, 237, 0.15)"
+                  background: "linear-gradient(180deg, rgba(167, 155, 255, 0.55) 0%, rgba(124, 92, 255, 0.25) 100%)",
+                  boxShadow: "0 0 26px -4px rgba(124, 92, 255, 0.75)"
                 }}
               />
 
@@ -616,7 +647,7 @@ export default function DashboardPage() {
                 style={{
                   fontSize: "1.45rem",
                   fontWeight: 700,
-                  color: "#09090b",
+                  color: "var(--text-primary)",
                   margin: "0 0 0.35rem 0",
                   letterSpacing: "-0.025em"
                 }}
@@ -625,7 +656,7 @@ export default function DashboardPage() {
               </h2>
               <p
                 style={{
-                  color: "#71717a",
+                  color: "var(--text-muted)",
                   fontSize: "0.9rem",
                   margin: "0 0 1.25rem 0",
                   lineHeight: 1.45,
@@ -637,7 +668,7 @@ export default function DashboardPage() {
               <button
                 onClick={() => openInterviewModal()}
                 style={{
-                  backgroundColor: "#09090b",
+                  backgroundColor: "#6d5cff",
                   color: "#ffffff",
                   border: "none",
                   borderRadius: "9px",
@@ -648,7 +679,7 @@ export default function DashboardPage() {
                   alignItems: "center",
                   gap: "0.45rem",
                   cursor: "pointer",
-                  boxShadow: "0 2px 6px rgba(0, 0, 0, 0.12)",
+                  boxShadow: "0 10px 24px -10px rgba(124, 92, 255, 0.8), 0 1px 0 rgba(255, 255, 255, 0.2) inset",
                   transition: "all 0.15s ease"
                 }}
                 className="hover-lift"
@@ -679,10 +710,10 @@ export default function DashboardPage() {
                 right: "42px",
                 width: "115px",
                 height: "82px",
-                backgroundColor: "#ffffff",
+                backgroundColor: "var(--bg-surface)",
                 borderRadius: "14px",
-                border: "1px solid #eef2ff",
-                boxShadow: "0 10px 25px -4px rgba(99, 102, 241, 0.12), 0 2px 6px rgba(0,0,0,0.03)",
+                border: "1px solid rgba(139, 125, 255, 0.28)",
+                boxShadow: "0 18px 40px -18px rgba(0, 0, 0, 0.9), 0 0 34px -14px rgba(124, 92, 255, 0.65)",
                 padding: "0.75rem",
                 display: "flex",
                 flexDirection: "column",
@@ -698,12 +729,12 @@ export default function DashboardPage() {
                     width: "28px",
                     height: "28px",
                     borderRadius: "50%",
-                    backgroundColor: "#6366f1",
+                    backgroundColor: "#6d5cff",
                     color: "#ffffff",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    boxShadow: "0 2px 6px rgba(99, 102, 241, 0.3)"
+                    boxShadow: "0 0 16px -2px rgba(139, 125, 255, 0.9)"
                   }}
                 >
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
@@ -712,15 +743,15 @@ export default function DashboardPage() {
                   </svg>
                 </div>
                 <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "3px" }}>
-                  <div style={{ width: "24px", height: "4px", backgroundColor: "#6366f1", borderRadius: "2px" }} />
-                  <div style={{ width: "16px", height: "3px", backgroundColor: "#e0e7ff", borderRadius: "2px" }} />
+                  <div style={{ width: "24px", height: "4px", backgroundColor: "#6d5cff", borderRadius: "2px" }} />
+                  <div style={{ width: "16px", height: "3px", backgroundColor: "var(--accent-brand-light)", borderRadius: "2px" }} />
                 </div>
               </div>
 
               {/* ID Lines */}
               <div style={{ display: "flex", flexDirection: "column", gap: "3.5px" }}>
-                <div style={{ width: "100%", height: "4.5px", backgroundColor: "#f3f4f6", borderRadius: "3px" }} />
-                <div style={{ width: "70%", height: "4.5px", backgroundColor: "#f3f4f6", borderRadius: "3px" }} />
+                <div style={{ width: "100%", height: "4.5px", backgroundColor: "var(--bg-subtle)", borderRadius: "3px" }} />
+                <div style={{ width: "70%", height: "4.5px", backgroundColor: "var(--bg-subtle)", borderRadius: "3px" }} />
               </div>
             </div>
 
@@ -731,10 +762,10 @@ export default function DashboardPage() {
                 right: "-6px",
                 width: "95px",
                 height: "76px",
-                backgroundColor: "#f5f3ff",
+                backgroundColor: "var(--accent-brand-light)",
                 borderRadius: "14px",
-                border: "1px solid #ede9fe",
-                boxShadow: "0 8px 20px -3px rgba(124, 58, 237, 0.12)",
+                border: "1px solid rgba(139, 125, 255, 0.28)",
+                boxShadow: "0 16px 38px -16px rgba(0, 0, 0, 0.9), 0 0 30px -14px rgba(168, 85, 247, 0.6)",
                 padding: "0.6rem 0.75rem",
                 display: "flex",
                 alignItems: "center",
@@ -744,15 +775,15 @@ export default function DashboardPage() {
                 zIndex: 1
               }}
             >
-              <div style={{ width: "3.5px", height: "14px", backgroundColor: "#818cf8", borderRadius: "2px" }} />
-              <div style={{ width: "3.5px", height: "24px", backgroundColor: "#6366f1", borderRadius: "2px" }} />
-              <div style={{ width: "3.5px", height: "34px", backgroundColor: "#7c3aed", borderRadius: "2px" }} />
-              <div style={{ width: "3.5px", height: "20px", backgroundColor: "#6366f1", borderRadius: "2px" }} />
-              <div style={{ width: "3.5px", height: "12px", backgroundColor: "#818cf8", borderRadius: "2px" }} />
+              <div style={{ width: "3.5px", height: "14px", backgroundColor: "#8b7dff", borderRadius: "2px" }} />
+              <div style={{ width: "3.5px", height: "24px", backgroundColor: "#6d5cff", borderRadius: "2px" }} />
+              <div style={{ width: "3.5px", height: "34px", backgroundColor: "#a855f7", borderRadius: "2px" }} />
+              <div style={{ width: "3.5px", height: "20px", backgroundColor: "#6d5cff", borderRadius: "2px" }} />
+              <div style={{ width: "3.5px", height: "12px", backgroundColor: "#8b7dff", borderRadius: "2px" }} />
             </div>
 
             {/* Subtle floating sparkles */}
-            <div style={{ position: "absolute", top: "0px", right: "70px", color: "#818cf8", fontSize: "14px" }}>✦</div>
+            <div style={{ position: "absolute", top: "0px", right: "70px", color: "var(--accent-brand)", fontSize: "14px" }}>✦</div>
             <div style={{ position: "absolute", bottom: "-4px", left: "40px", color: "#c084fc", fontSize: "12px" }}>✦</div>
           </div>
         </div>
@@ -768,14 +799,16 @@ export default function DashboardPage() {
             zIndex: 1
           }}
         >
-          {/* Card 1: Interview Readiness (Derived from Resume & Profile Match) */}
+          {/* Card 1: Resume-to-role match (from the matcher's breakdown). This
+              is coverage of the target role's requirements by the resume, not
+              interview readiness and not measured skill. */}
           <div
-            className="hover-elevate rise-in"
+            className="glass-card hover-elevate rise-in"
             style={{
-              backgroundColor: "#ffffff",
-              border: "1px solid #f1f1f4",
+              backgroundColor: "var(--bg-surface)",
+              border: "1px solid var(--border-subtle)",
               borderRadius: "18px",
-              boxShadow: "0 2px 10px rgba(0, 0, 0, 0.02)",
+              boxShadow: "0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 20px 48px -22px rgba(0, 0, 0, 0.88)",
               padding: "1.35rem 1.4rem",
               display: "flex",
               flexDirection: "column",
@@ -787,10 +820,10 @@ export default function DashboardPage() {
             <div>
               {/* Header */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.9rem" }}>
-                <h3 style={{ fontSize: "0.95rem", fontWeight: 700, color: "#09090b", margin: 0 }}>
-                  Interview Readiness
+                <h3 style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-primary)", margin: 0 }}>
+                  Resume–Role Match
                 </h3>
-                <TrendingUp size={18} color="#6366f1" strokeWidth={2.2} />
+                <TrendingUp size={18} color="var(--accent-brand)" strokeWidth={2.2} />
               </div>
 
               {/* Circular Gauge */}
@@ -802,7 +835,7 @@ export default function DashboardPage() {
                       cx="60"
                       cy="60"
                       r={gaugeRadius}
-                      stroke="#f1f0fb"
+                      stroke="rgba(255, 255, 255, 0.07)"
                       strokeWidth="9"
                       fill="none"
                     />
@@ -822,7 +855,7 @@ export default function DashboardPage() {
                   </svg>
                   {/* Gauge Center Text */}
                   <div style={{ position: "absolute", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-                    <span style={{ fontSize: "1.65rem", fontWeight: 800, color: "#09090b", lineHeight: 1, letterSpacing: "-0.03em" }}>
+                    <span style={{ fontSize: "1.65rem", fontWeight: 800, color: "var(--text-primary)", lineHeight: 1, letterSpacing: "-0.03em" }}>
                       {readinessScore !== null ? `${animatedReadiness}%` : "—"}
                     </span>
                     <span style={{ fontSize: "0.78rem", fontWeight: 600, color: readinessColor, marginTop: "3px" }}>
@@ -832,13 +865,28 @@ export default function DashboardPage() {
                 </div>
               </div>
 
+              {/* Says plainly what the percentage is, so a high number is not
+                  mistaken for a measure of interview performance. */}
+              <p
+                style={{
+                  fontSize: "0.72rem",
+                  color: "var(--text-tertiary)",
+                  textAlign: "center",
+                  lineHeight: 1.45,
+                  margin: "0 0 0.7rem"
+                }}
+              >
+                How much of {hasTargetRole ? targetRoleTitle : "your target role"}&rsquo;s requirements
+                your resume evidences &mdash; not a score for your interviews.
+              </p>
+
               {/* Breakdown Bars (Derived from Resume Job Match Breakdown) */}
               {highestMatch ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", marginBottom: "0.5rem" }}>
-                {/* Technical Skills */}
+                {/* Share of the role's required skills evidenced in the resume */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "0.75rem" }}>
-                  <span style={{ color: "#71717a", width: "85px" }}>Technical Skills</span>
-                  <div style={{ flex: 1, height: "5px", backgroundColor: "#f3f4f6", borderRadius: "10px", margin: "0 0.5rem", overflow: "hidden" }}>
+                  <span style={{ color: "var(--text-muted)", width: "85px" }} title="Share of this role's required skills found in your resume">Skills covered</span>
+                  <div style={{ flex: 1, height: "5px", backgroundColor: "var(--bg-subtle)", borderRadius: "10px", margin: "0 0.5rem", overflow: "hidden" }}>
                     <div
                       style={{
                         width: `${animatedTech}%`,
@@ -849,13 +897,13 @@ export default function DashboardPage() {
                       }}
                     />
                   </div>
-                  <span style={{ fontWeight: 600, color: "#09090b", width: "28px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{animatedTech}%</span>
+                  <span style={{ fontWeight: 600, color: "var(--text-primary)", width: "28px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{animatedTech}%</span>
                 </div>
 
                 {/* Projects & Domain */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "0.75rem" }}>
-                  <span style={{ color: "#71717a", width: "85px" }}>Projects</span>
-                  <div style={{ flex: 1, height: "5px", backgroundColor: "#f3f4f6", borderRadius: "10px", margin: "0 0.5rem", overflow: "hidden" }}>
+                  <span style={{ color: "var(--text-muted)", width: "85px" }} title="Strength of the project evidence in your resume against this role's key topics">Project evidence</span>
+                  <div style={{ flex: 1, height: "5px", backgroundColor: "var(--bg-subtle)", borderRadius: "10px", margin: "0 0.5rem", overflow: "hidden" }}>
                     <div
                       style={{
                         width: `${animatedProjects}%`,
@@ -866,13 +914,13 @@ export default function DashboardPage() {
                       }}
                     />
                   </div>
-                  <span style={{ fontWeight: 600, color: "#09090b", width: "28px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{animatedProjects}%</span>
+                  <span style={{ fontWeight: 600, color: "var(--text-primary)", width: "28px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{animatedProjects}%</span>
                 </div>
 
                 {/* Experience Match */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "0.75rem" }}>
-                  <span style={{ color: "#71717a", width: "85px" }}>Experience</span>
-                  <div style={{ flex: 1, height: "5px", backgroundColor: "#f3f4f6", borderRadius: "10px", margin: "0 0.5rem", overflow: "hidden" }}>
+                  <span style={{ color: "var(--text-muted)", width: "85px" }} title="How your recorded work experience lines up with this role's level">Experience fit</span>
+                  <div style={{ flex: 1, height: "5px", backgroundColor: "var(--bg-subtle)", borderRadius: "10px", margin: "0 0.5rem", overflow: "hidden" }}>
                     <div
                       style={{
                         width: `${animatedExp}%`,
@@ -883,7 +931,7 @@ export default function DashboardPage() {
                       }}
                     />
                   </div>
-                  <span style={{ fontWeight: 600, color: "#09090b", width: "28px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{animatedExp}%</span>
+                  <span style={{ fontWeight: 600, color: "var(--text-primary)", width: "28px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{animatedExp}%</span>
                 </div>
               </div>
               ) : (
@@ -891,17 +939,17 @@ export default function DashboardPage() {
                   style={{
                     padding: "0.85rem 0.9rem",
                     borderRadius: "12px",
-                    backgroundColor: "#fafafa",
-                    border: "1px dashed #e4e4e7",
+                    backgroundColor: "var(--bg-subtle)",
+                    border: "1px dashed var(--border-subtle)",
                     fontSize: "0.78rem",
-                    color: "#71717a",
+                    color: "var(--text-muted)",
                     lineHeight: 1.5,
                     textAlign: "center"
                   }}
                 >
                   {hasResume
                     ? "No role match analysis yet — pick a target role to see your skills, projects and experience breakdown."
-                    : "Upload your resume to unlock your readiness breakdown."}
+                    : "Upload your resume to unlock your role match breakdown."}
                 </div>
               )}
             </div>
@@ -911,7 +959,7 @@ export default function DashboardPage() {
               <Link
                 href="/resume"
                 style={{
-                  color: "#6366f1",
+                  color: "var(--accent-brand)",
                   fontSize: "0.82rem",
                   fontWeight: 600,
                   textDecoration: "none",
@@ -928,12 +976,12 @@ export default function DashboardPage() {
 
           {/* Card 2: Resume Status */}
           <div
-            className="hover-elevate rise-in"
+            className="glass-card hover-elevate rise-in"
             style={{
-              backgroundColor: "#ffffff",
-              border: "1px solid #f1f1f4",
+              backgroundColor: "var(--bg-surface)",
+              border: "1px solid var(--border-subtle)",
               borderRadius: "18px",
-              boxShadow: "0 2px 10px rgba(0, 0, 0, 0.02)",
+              boxShadow: "0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 20px 48px -22px rgba(0, 0, 0, 0.88)",
               padding: "1.35rem 1.4rem",
               display: "flex",
               flexDirection: "column",
@@ -945,10 +993,10 @@ export default function DashboardPage() {
             <div>
               {/* Header */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.9rem" }}>
-                <h3 style={{ fontSize: "0.95rem", fontWeight: 700, color: "#09090b", margin: 0 }}>
+                <h3 style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-primary)", margin: 0 }}>
                   Resume Status
                 </h3>
-                <FileCheck size={18} color="#2563eb" strokeWidth={2.2} />
+                <FileCheck size={18} color="var(--accent-cyan)" strokeWidth={2.2} />
               </div>
 
               {/* Center Graphic */}
@@ -958,12 +1006,12 @@ export default function DashboardPage() {
                     width: "64px",
                     height: "64px",
                     borderRadius: "16px",
-                    backgroundColor: "#eff6ff",
+                    backgroundColor: "var(--accent-cyan-light)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     marginBottom: "0.75rem",
-                    boxShadow: "0 2px 8px rgba(37, 99, 235, 0.08)"
+                    boxShadow: "0 0 22px -8px rgba(56, 189, 248, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.12)"
                   }}
                 >
                   <svg width="30" height="34" viewBox="0 0 24 28" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -983,17 +1031,17 @@ export default function DashboardPage() {
                     display: "inline-flex",
                     alignItems: "center",
                     gap: "0.35rem",
-                    color: hasResume ? "#2563eb" : "#d97706",
+                    color: hasResume ? "var(--accent-cyan)" : "var(--accent-amber)",
                     fontSize: "0.9rem",
                     fontWeight: 700,
                     marginBottom: "0.45rem"
                   }}
                 >
-                  {hasResume ? <CheckCircle2 size={15} color="#2563eb" /> : <AlertCircle size={15} color="#d97706" />}
+                  {hasResume ? <CheckCircle2 size={15} color="var(--accent-cyan)" /> : <AlertCircle size={15} color="var(--accent-amber)" />}
                   <span>{hasResume ? "Ready" : "Pending"}</span>
                 </div>
 
-                <div style={{ fontSize: "0.8rem", color: "#71717a", marginBottom: "0.55rem" }}>
+                <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.55rem" }}>
                   {hasResume ? `${extractedSkills.length || 0} skills detected` : "Upload resume to extract skills"}
                 </div>
 
@@ -1013,9 +1061,9 @@ export default function DashboardPage() {
                         style={{
                           fontSize: "0.7rem",
                           fontWeight: 600,
-                          color: "#1d4ed8",
-                          backgroundColor: "#eff6ff",
-                          border: "1px solid #dbeafe",
+                          color: "var(--accent-cyan)",
+                          backgroundColor: "var(--accent-cyan-light)",
+                          border: "1px solid rgba(56, 189, 248, 0.3)",
                           borderRadius: "9999px",
                           padding: "0.15rem 0.5rem",
                           maxWidth: "110px",
@@ -1029,14 +1077,14 @@ export default function DashboardPage() {
                       </span>
                     ))}
                     {extractedSkills.length > topSkills.length && (
-                      <span style={{ fontSize: "0.7rem", fontWeight: 600, color: "#71717a", padding: "0.15rem 0.3rem" }}>
+                      <span style={{ fontSize: "0.7rem", fontWeight: 600, color: "var(--text-muted)", padding: "0.15rem 0.3rem" }}>
                         +{extractedSkills.length - topSkills.length}
                       </span>
                     )}
                   </div>
                 )}
 
-                <div style={{ fontSize: "0.78rem", fontWeight: 500, color: hasTargetRole ? "#09090b" : "#a1a1aa" }}>
+                <div style={{ fontSize: "0.78rem", fontWeight: 500, color: hasTargetRole ? "#6d5cff" : "#a1a1aa" }}>
                   {hasTargetRole ? `${targetRoleTitle} • ${targetDomain}` : "No target role set yet"}
                 </div>
               </div>
@@ -1047,7 +1095,7 @@ export default function DashboardPage() {
               <Link
                 href="/resume"
                 style={{
-                  color: "#6366f1",
+                  color: "var(--accent-brand)",
                   fontSize: "0.82rem",
                   fontWeight: 600,
                   textDecoration: "none",
@@ -1064,12 +1112,12 @@ export default function DashboardPage() {
 
           {/* Card 3: Your Target */}
           <div
-            className="hover-elevate rise-in"
+            className="glass-card hover-elevate rise-in"
             style={{
-              backgroundColor: "#ffffff",
-              border: "1px solid #f1f1f4",
+              backgroundColor: "var(--bg-surface)",
+              border: "1px solid var(--border-subtle)",
               borderRadius: "18px",
-              boxShadow: "0 2px 10px rgba(0, 0, 0, 0.02)",
+              boxShadow: "0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 20px 48px -22px rgba(0, 0, 0, 0.88)",
               padding: "1.35rem 1.4rem",
               display: "flex",
               flexDirection: "column",
@@ -1081,10 +1129,10 @@ export default function DashboardPage() {
             <div>
               {/* Header */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.9rem" }}>
-                <h3 style={{ fontSize: "0.95rem", fontWeight: 700, color: "#09090b", margin: 0 }}>
+                <h3 style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-primary)", margin: 0 }}>
                   Your Target
                 </h3>
-                <Target size={18} color="#10b981" strokeWidth={2.2} />
+                <Target size={18} color="var(--accent-emerald)" strokeWidth={2.2} />
               </div>
 
               {/* Center Graphic */}
@@ -1094,12 +1142,12 @@ export default function DashboardPage() {
                     width: "64px",
                     height: "64px",
                     borderRadius: "50%",
-                    backgroundColor: "#ecfdf5",
+                    backgroundColor: "var(--accent-emerald-light)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     marginBottom: "0.75rem",
-                    boxShadow: "0 2px 8px rgba(16, 185, 129, 0.08)"
+                    boxShadow: "0 0 22px -8px rgba(52, 211, 153, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.12)"
                   }}
                 >
                   <svg width="34" height="34" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1115,14 +1163,14 @@ export default function DashboardPage() {
                   style={{
                     fontSize: "0.95rem",
                     fontWeight: 700,
-                    color: hasTargetRole ? "#09090b" : "#a1a1aa",
+                    color: hasTargetRole ? "#6d5cff" : "#a1a1aa",
                     marginBottom: "0.2rem"
                   }}
                 >
                   {hasTargetRole ? targetRoleTitle : "No target role set yet"}
                 </div>
 
-                <div style={{ fontSize: "0.8rem", color: "#71717a", marginBottom: "0.85rem" }}>
+                <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.85rem" }}>
                   {hasTargetRole ? targetDomain : "Add one in your profile or upload a resume"}
                 </div>
 
@@ -1133,9 +1181,9 @@ export default function DashboardPage() {
                       display: "inline-flex",
                       alignItems: "center",
                       gap: "0.35rem",
-                      backgroundColor: "#ecfdf5",
-                      border: "1px solid #a7f3d0",
-                      color: "#047857",
+                      backgroundColor: "var(--accent-emerald-light)",
+                      border: "1px solid rgba(52, 211, 153, 0.32)",
+                      color: "var(--accent-emerald)",
                       padding: "0.2rem 0.6rem",
                       borderRadius: "9999px",
                       fontSize: "0.72rem",
@@ -1159,14 +1207,14 @@ export default function DashboardPage() {
                           display: "inline-flex",
                           alignItems: "center",
                           gap: "0.3rem",
-                          backgroundColor: "#ffffff",
-                          border: "1px solid #e4e4e7",
+                          backgroundColor: "var(--bg-surface)",
+                          border: "1px solid var(--border-subtle)",
                           borderRadius: "8px",
                           padding: "0.22rem 0.5rem",
                           fontSize: "0.72rem",
                           fontWeight: 600,
-                          color: "#3f3f46",
-                          boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                          color: "var(--text-secondary)",
+                          boxShadow: "0 2px 8px rgba(0, 0, 0, 0.5)",
                           maxWidth: "120px",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
@@ -1178,8 +1226,8 @@ export default function DashboardPage() {
                             width: "16px",
                             height: "16px",
                             borderRadius: "5px",
-                            backgroundColor: "#ecfdf5",
-                            color: "#059669",
+                            backgroundColor: "var(--accent-emerald-light)",
+                            color: "var(--accent-emerald)",
                             display: "inline-flex",
                             alignItems: "center",
                             justifyContent: "center",
@@ -1195,7 +1243,7 @@ export default function DashboardPage() {
                     ))}
                   </div>
                 ) : (
-                  <div style={{ fontSize: "0.75rem", color: "#a1a1aa" }}>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-tertiary)" }}>
                     No matched companies yet
                   </div>
                 )}
@@ -1207,7 +1255,7 @@ export default function DashboardPage() {
               <Link
                 href="/companies"
                 style={{
-                  color: "#6366f1",
+                  color: "var(--accent-brand)",
                   fontSize: "0.82rem",
                   fontWeight: 600,
                   textDecoration: "none",
@@ -1224,12 +1272,12 @@ export default function DashboardPage() {
 
           {/* Card 4: Latest Interview (FIX #2: Actual Most Recent Completed Interview Score) */}
           <div
-            className="hover-elevate rise-in"
+            className="glass-card hover-elevate rise-in"
             style={{
-              backgroundColor: "#ffffff",
-              border: "1px solid #f1f1f4",
+              backgroundColor: "var(--bg-surface)",
+              border: "1px solid var(--border-subtle)",
               borderRadius: "18px",
-              boxShadow: "0 2px 10px rgba(0, 0, 0, 0.02)",
+              boxShadow: "0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 20px 48px -22px rgba(0, 0, 0, 0.88)",
               padding: "1.35rem 1.4rem",
               display: "flex",
               flexDirection: "column",
@@ -1241,10 +1289,10 @@ export default function DashboardPage() {
             <div>
               {/* Header */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.9rem" }}>
-                <h3 style={{ fontSize: "0.95rem", fontWeight: 700, color: "#09090b", margin: 0 }}>
+                <h3 style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-primary)", margin: 0 }}>
                   Latest Interview
                 </h3>
-                <AudioLines size={18} color="#6366f1" strokeWidth={2.2} />
+                <AudioLines size={18} color="var(--accent-brand)" strokeWidth={2.2} />
               </div>
 
               {/* Center Graphic */}
@@ -1254,23 +1302,23 @@ export default function DashboardPage() {
                     width: "64px",
                     height: "64px",
                     borderRadius: "16px",
-                    backgroundColor: "#f5f3ff",
+                    backgroundColor: "var(--accent-brand-light)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     gap: "3.5px",
                     marginBottom: "0.75rem",
-                    boxShadow: "0 2px 8px rgba(99, 102, 241, 0.08)"
+                    boxShadow: "0 0 22px -8px rgba(124, 92, 255, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.12)"
                   }}
                 >
-                  <div style={{ width: "3.5px", height: "12px", backgroundColor: "#818cf8", borderRadius: "2px" }} />
-                  <div style={{ width: "3.5px", height: "22px", backgroundColor: "#6366f1", borderRadius: "2px" }} />
-                  <div style={{ width: "3.5px", height: "30px", backgroundColor: "#7c3aed", borderRadius: "2px" }} />
-                  <div style={{ width: "3.5px", height: "18px", backgroundColor: "#6366f1", borderRadius: "2px" }} />
-                  <div style={{ width: "3.5px", height: "10px", backgroundColor: "#818cf8", borderRadius: "2px" }} />
+                  <div style={{ width: "3.5px", height: "12px", backgroundColor: "#8b7dff", borderRadius: "2px" }} />
+                  <div style={{ width: "3.5px", height: "22px", backgroundColor: "#6d5cff", borderRadius: "2px" }} />
+                  <div style={{ width: "3.5px", height: "30px", backgroundColor: "#a855f7", borderRadius: "2px" }} />
+                  <div style={{ width: "3.5px", height: "18px", backgroundColor: "#6d5cff", borderRadius: "2px" }} />
+                  <div style={{ width: "3.5px", height: "10px", backgroundColor: "#8b7dff", borderRadius: "2px" }} />
                 </div>
 
-                <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#09090b", marginBottom: "0.35rem" }}>
+                <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.35rem" }}>
                   {hasCompletedInterview ? latestRoleTitle : "No interviews yet"}
                 </div>
 
@@ -1281,9 +1329,9 @@ export default function DashboardPage() {
                     alignItems: "center",
                     gap: "0.3rem",
                     backgroundColor:
-                      latestExactScore === null ? "#ede9fe" : latestExactScore >= 70 ? "#ecfdf5" : latestExactScore >= 50 ? "#eef2ff" : "#fffbeb",
+                      latestExactScore === null ? "var(--accent-brand-light)" : latestExactScore >= 70 ? "var(--accent-emerald-light)" : latestExactScore >= 50 ? "var(--accent-brand-light)" : "var(--accent-amber-light)",
                     color:
-                      latestExactScore === null ? "#6366f1" : latestExactScore >= 70 ? "#047857" : latestExactScore >= 50 ? "#4f46e5" : "#b45309",
+                      latestExactScore === null ? "var(--accent-brand)" : latestExactScore >= 70 ? "var(--accent-emerald)" : latestExactScore >= 50 ? "#4f46e5" : "var(--accent-amber)",
                     padding: "0.22rem 0.65rem",
                     borderRadius: "20px",
                     fontSize: "0.75rem",
@@ -1312,7 +1360,7 @@ export default function DashboardPage() {
                       width: "88px",
                       height: "5px",
                       borderRadius: "9999px",
-                      backgroundColor: "#f1f0fb",
+                      backgroundColor: "var(--accent-brand-light)",
                       overflow: "hidden",
                       marginBottom: "0.5rem"
                     }}
@@ -1324,7 +1372,7 @@ export default function DashboardPage() {
                         height: "100%",
                         borderRadius: "9999px",
                         backgroundColor:
-                          latestExactScore >= 70 ? "#059669" : latestExactScore >= 50 ? "#4f46e5" : "#d97706"
+                          latestExactScore >= 70 ? "var(--accent-emerald)" : latestExactScore >= 50 ? "var(--accent-brand)" : "var(--accent-amber)"
                       }}
                     />
                   </div>
@@ -1335,7 +1383,7 @@ export default function DashboardPage() {
                     style={{
                       fontSize: "0.7rem",
                       fontWeight: 600,
-                      color: "#a1a1aa",
+                      color: "var(--text-tertiary)",
                       textTransform: "uppercase",
                       letterSpacing: "0.05em",
                       marginBottom: "0.35rem"
@@ -1346,7 +1394,7 @@ export default function DashboardPage() {
                 )}
 
                 {/* Time Ago */}
-                <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem", color: "#71717a" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem", color: "var(--text-muted)" }}>
                   <Clock size={12} />
                   <span>{hasCompletedInterview ? `Completed ${latestTimeAgo}` : "Start your first session"}</span>
                 </div>
@@ -1359,7 +1407,7 @@ export default function DashboardPage() {
                 <Link
                   href={`/reports/${latestCompletedSession.id}`}
                   style={{
-                    color: "#6366f1",
+                    color: "var(--accent-brand)",
                     fontSize: "0.82rem",
                     fontWeight: 600,
                     textDecoration: "none",
@@ -1378,7 +1426,7 @@ export default function DashboardPage() {
                     background: "none",
                     border: "none",
                     cursor: "pointer",
-                    color: "#6366f1",
+                    color: "var(--accent-brand)",
                     fontSize: "0.82rem",
                     fontWeight: 600,
                     display: "inline-flex",
@@ -1397,13 +1445,13 @@ export default function DashboardPage() {
 
         {/* Bottom Motivation / Progress Card */}
         <div
-          className="hover-elevate rise-in"
+          className="glass-card hover-elevate rise-in"
           style={{
             animationDelay: "300ms",
-            backgroundColor: "#ffffff",
-            border: "1px solid #f1f1f4",
+            backgroundColor: "var(--bg-surface)",
+            border: "1px solid var(--border-subtle)",
             borderRadius: "18px",
-            boxShadow: "0 2px 10px rgba(0, 0, 0, 0.02)",
+            boxShadow: "0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 20px 48px -22px rgba(0, 0, 0, 0.88)",
             padding: "1.15rem 1.75rem",
             display: "flex",
             alignItems: "center",
@@ -1420,21 +1468,21 @@ export default function DashboardPage() {
                 width: "44px",
                 height: "44px",
                 borderRadius: "12px",
-                backgroundColor: "#f5f3ff",
+                backgroundColor: "var(--accent-brand-light)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 flexShrink: 0,
-                color: "#6366f1"
+                color: "var(--accent-brand)"
               }}
             >
               <Lightbulb size={22} strokeWidth={2} />
             </div>
             <div>
-              <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#09090b", marginBottom: "0.15rem" }}>
+              <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.15rem" }}>
                 Keep going, {firstName}! 🚀
               </div>
-              <div style={{ fontSize: "0.82rem", color: "#71717a" }}>
+              <div style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
                 Consistency today, selection tomorrow.
               </div>
             </div>
@@ -1470,8 +1518,8 @@ export default function DashboardPage() {
                             cx={pt.x}
                             cy={pt.y}
                             r={i === pts.length - 1 ? 4 : 3}
-                            fill={i === pts.length - 1 ? "#6366f1" : "#ffffff"}
-                            stroke={i === pts.length - 1 ? "#ffffff" : "#6366f1"}
+                            fill={i === pts.length - 1 ? "#a79bff" : "#12142a"}
+                            stroke={i === pts.length - 1 ? "#12142a" : "#8b7dff"}
                             strokeWidth="2"
                           >
                             <title>{`Interview ${i + 1}: ${pt.score}/100`}</title>
@@ -1481,7 +1529,7 @@ export default function DashboardPage() {
                     );
                   })()}
                 </svg>
-                <div style={{ fontSize: "0.68rem", color: "#a1a1aa", textAlign: "right", fontWeight: 600 }}>
+                <div style={{ fontSize: "0.68rem", color: "var(--text-tertiary)", textAlign: "right", fontWeight: 600 }}>
                   Score across {scoreTrend.length} completed interviews
                 </div>
               </>
@@ -1499,10 +1547,10 @@ export default function DashboardPage() {
               >
                 <div style={{ display: "flex", alignItems: "flex-end", gap: "4px", height: "26px" }} aria-hidden="true">
                   {[10, 16, 12, 20, 14].map((h, i) => (
-                    <span key={i} style={{ width: "5px", height: `${h}px`, borderRadius: "3px", backgroundColor: "#eceafd" }} />
+                    <span key={i} style={{ width: "5px", height: `${h}px`, borderRadius: "3px", backgroundColor: "var(--accent-brand-light)" }} />
                   ))}
                 </div>
-                <div style={{ fontSize: "0.72rem", color: "#a1a1aa", fontWeight: 500, maxWidth: "230px" }}>
+                <div style={{ fontSize: "0.72rem", color: "var(--text-tertiary)", fontWeight: 500, maxWidth: "230px" }}>
                   {scoreTrend.length === 1
                     ? "One more interview and your score trend appears here."
                     : "Complete interviews to build your score trend."}
@@ -1530,32 +1578,34 @@ export default function DashboardPage() {
             gap: "0.65rem",
             padding: "0.85rem 1rem",
             borderRadius: "12px",
-            backgroundColor: "#ffffff",
-            border: `1px solid ${uploadStatus === "FAILED" ? "#fecdd3" : uploadStatus === "READY" ? "#a7f3d0" : "#e4e4e7"}`,
+            backgroundColor: "var(--bg-surface)",
+            border: `1px solid ${uploadStatus === "FAILED" ? "rgba(251, 113, 133, 0.32)" : uploadStatus === "READY" ? "rgba(52, 211, 153, 0.32)" : "var(--border-subtle)"}`,
+            backdropFilter: "blur(20px) saturate(150%)",
+            WebkitBackdropFilter: "blur(20px) saturate(150%)",
             boxShadow: "var(--shadow-modal)"
           }}
         >
           <div style={{ flexShrink: 0, marginTop: "1px" }}>
             {uploadStatus === "FAILED" ? (
-              <AlertCircle size={17} color="#e11d48" />
+              <AlertCircle size={17} color="var(--accent-rose)" />
             ) : uploadStatus === "READY" ? (
-              <CheckCircle2 size={17} color="#059669" />
+              <CheckCircle2 size={17} color="var(--accent-emerald)" />
             ) : (
-              <Sparkles size={17} color="#4f46e5" />
+              <Sparkles size={17} color="var(--accent-brand)" />
             )}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#09090b", marginBottom: "0.25rem" }}>
+            <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.25rem" }}>
               {uploadStatus === "FAILED" ? "Resume upload failed" : uploadStatus === "READY" ? "Resume ready" : "Processing resume"}
             </div>
-            <div style={{ fontSize: "0.78rem", color: "#71717a", lineHeight: 1.45 }}>
+            <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", lineHeight: 1.45 }}>
               {uploadStatus === "FAILED" ? uploadError : statusMessage}
             </div>
             {uploadStatus !== "FAILED" && uploadStatus !== "READY" && (
               <div
                 className="indeterminate-track"
                 aria-hidden="true"
-                style={{ marginTop: "0.55rem", height: "4px", borderRadius: "9999px", color: "#4f46e5" }}
+                style={{ marginTop: "0.55rem", height: "4px", borderRadius: "9999px", color: "var(--accent-brand)" }}
               />
             )}
           </div>
@@ -1563,7 +1613,7 @@ export default function DashboardPage() {
             <button
               onClick={() => setUploadStatus("IDLE")}
               aria-label="Dismiss"
-              style={{ background: "transparent", border: "none", color: "#a1a1aa", cursor: "pointer", padding: 0 }}
+              style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", padding: 0 }}
             >
               <X size={15} />
             </button>
@@ -1580,8 +1630,8 @@ export default function DashboardPage() {
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: "rgba(9, 9, 11, 0.4)",
-            backdropFilter: "blur(4px)",
+            backgroundColor: "rgba(4, 5, 11, 0.72)",
+            backdropFilter: "blur(8px)",
             WebkitBackdropFilter: "blur(4px)",
             display: "flex",
             alignItems: "center",
@@ -1596,26 +1646,28 @@ export default function DashboardPage() {
               maxWidth: "420px",
               width: "100%",
               padding: "1.75rem",
-              backgroundColor: "#ffffff",
+              backgroundColor: "var(--bg-surface)",
               borderRadius: "14px",
+              backdropFilter: "blur(24px) saturate(150%)",
+              WebkitBackdropFilter: "blur(24px) saturate(150%)",
               boxShadow: "var(--shadow-modal)",
               position: "relative",
-              border: "1px solid #e4e4e7"
+              border: "1px solid var(--border-subtle)"
             }}
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
-              <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 600, color: "#09090b" }}>Replace current resume?</h3>
+              <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)" }}>Replace current resume?</h3>
               <button
                 onClick={() => setShowReplaceModal(false)}
-                style={{ background: "transparent", border: "none", color: "#71717a", cursor: "pointer", padding: "0.2rem" }}
+                style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: "0.2rem" }}
                 aria-label="Close"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <p style={{ color: "#71717a", fontSize: "0.85rem", marginBottom: "1.5rem", lineHeight: 1.5 }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "1.5rem", lineHeight: 1.5 }}>
               Your new resume will be parsed to update your extracted skills and calculate new role compatibility recommendations.
             </p>
 
@@ -1646,8 +1698,8 @@ export default function DashboardPage() {
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: "rgba(9, 9, 11, 0.4)",
-            backdropFilter: "blur(4px)",
+            backgroundColor: "rgba(4, 5, 11, 0.72)",
+            backdropFilter: "blur(8px)",
             WebkitBackdropFilter: "blur(4px)",
             display: "flex",
             alignItems: "center",
@@ -1662,24 +1714,26 @@ export default function DashboardPage() {
               maxWidth: "460px",
               width: "100%",
               padding: "1.75rem",
-              backgroundColor: "#ffffff",
+              backgroundColor: "var(--bg-surface)",
               borderRadius: "14px",
+              backdropFilter: "blur(24px) saturate(150%)",
+              WebkitBackdropFilter: "blur(24px) saturate(150%)",
               boxShadow: "var(--shadow-modal)",
               position: "relative",
-              border: "1px solid #e4e4e7"
+              border: "1px solid var(--border-subtle)"
             }}
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: 600, color: "#09090b" }}>Select Interview Format</h3>
-                <span style={{ fontSize: "0.78rem", color: "#71717a" }}>
-                  Role: <strong style={{ color: "#09090b" }}>{selectedRole.title}</strong>
+                <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: 600, color: "var(--text-primary)" }}>Select Interview Format</h3>
+                <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                  Role: <strong style={{ color: "var(--text-primary)" }}>{selectedRole.title}</strong>
                 </span>
               </div>
               <button
                 onClick={() => setShowModeModal(false)}
-                style={{ background: "transparent", border: "none", color: "#71717a", cursor: "pointer", padding: "0.2rem" }}
+                style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: "0.2rem" }}
                 aria-label="Close"
               >
                 <X size={18} />
@@ -1687,18 +1741,18 @@ export default function DashboardPage() {
             </div>
 
             {highestMatch && highestMatch.is_eligible === false ? (
-              <div style={{ marginTop: "1rem", padding: "1rem", backgroundColor: "#fffbeb", border: "1px solid #fde68a", borderRadius: "10px", color: "#92400e" }}>
+              <div style={{ marginTop: "1rem", padding: "1rem", backgroundColor: "var(--accent-amber-light)", border: "1px solid rgba(251, 191, 36, 0.32)", borderRadius: "10px", color: "var(--accent-amber)" }}>
                 <div style={{ fontWeight: 700, fontSize: "0.88rem", marginBottom: "0.3rem" }}>
                   Your profile needs a little more information
                 </div>
-                <p style={{ fontSize: "0.825rem", color: "#78350f", margin: "0 0 0.8rem 0", lineHeight: 1.45 }}>
+                <p style={{ fontSize: "0.825rem", color: "var(--accent-amber)", margin: "0 0 0.8rem 0", lineHeight: 1.45 }}>
                   To create a meaningful role-specific interview, we need more evidence from your resume. Add a few technical skills, projects, or relevant experience and try again.
                 </p>
                 <Link
                   href="/resume"
                   onClick={() => setShowModeModal(false)}
                   className="btn btn-primary"
-                  style={{ fontSize: "0.8rem", padding: "0.45rem 1rem", backgroundColor: "#b45309", color: "#ffffff", display: "inline-flex", gap: "0.35rem" }}
+                  style={{ fontSize: "0.8rem", padding: "0.45rem 1rem", backgroundColor: "var(--accent-amber)", color: "#ffffff", display: "inline-flex", gap: "0.35rem" }}
                 >
                   <Upload size={13} /> <span>Update Resume / Profile</span>
                 </Link>
@@ -1715,20 +1769,20 @@ export default function DashboardPage() {
                   alignItems: "center",
                   gap: "0.9rem",
                   textDecoration: "none",
-                  backgroundColor: "#ffffff",
+                  backgroundColor: "var(--bg-surface)",
                   borderRadius: "12px",
-                  border: "1px solid #e4e4e7"
+                  border: "1px solid var(--border-subtle)"
                 }}
               >
-                <div style={{ backgroundColor: "#f8fafc", padding: "0.65rem", borderRadius: "10px", color: "#09090b", border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ backgroundColor: "var(--bg-subtle)", padding: "0.65rem", borderRadius: "10px", color: "var(--text-primary)", border: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <MessageSquare size={20} />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <h4 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600, color: "#09090b", letterSpacing: "-0.01em" }}>Text Interview</h4>
-                  <span style={{ fontSize: "0.78rem", color: "#64748b" }}>Conversational technical interview</span>
+                  <h4 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", letterSpacing: "-0.01em" }}>Text Interview</h4>
+                  <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Conversational technical interview</span>
                 </div>
                 <div className="format-arrow">
-                  <ArrowRight size={16} color="#94a3b8" />
+                  <ArrowRight size={16} color="var(--text-muted)" />
                 </div>
               </Link>
 
@@ -1741,20 +1795,20 @@ export default function DashboardPage() {
                   alignItems: "center",
                   gap: "0.9rem",
                   textDecoration: "none",
-                  backgroundColor: "#ffffff",
+                  backgroundColor: "var(--bg-surface)",
                   borderRadius: "12px",
-                  border: "1px solid #e4e4e7"
+                  border: "1px solid var(--border-subtle)"
                 }}
               >
-                <div style={{ backgroundColor: "#faf5ff", padding: "0.65rem", borderRadius: "10px", color: "#7c3aed", border: "1px solid #f3e8ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ backgroundColor: "var(--accent-brand-light)", padding: "0.65rem", borderRadius: "10px", color: "#c084fc", border: "1px solid rgba(192, 132, 252, 0.28)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <Mic size={20} />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <h4 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600, color: "#09090b", letterSpacing: "-0.01em" }}>Voice Interview</h4>
-                  <span style={{ fontSize: "0.78rem", color: "#64748b" }}>Real-time spoken interview</span>
+                  <h4 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", letterSpacing: "-0.01em" }}>Voice Interview</h4>
+                  <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Real-time spoken interview</span>
                 </div>
                 <div className="format-arrow">
-                  <ArrowRight size={16} color="#94a3b8" />
+                  <ArrowRight size={16} color="var(--text-muted)" />
                 </div>
               </Link>
 
@@ -1767,20 +1821,20 @@ export default function DashboardPage() {
                   alignItems: "center",
                   gap: "0.9rem",
                   textDecoration: "none",
-                  backgroundColor: "#ffffff",
+                  backgroundColor: "var(--bg-surface)",
                   borderRadius: "12px",
-                  border: "1px solid #e4e4e7"
+                  border: "1px solid var(--border-subtle)"
                 }}
               >
-                <div style={{ backgroundColor: "#eef2ff", padding: "0.65rem", borderRadius: "10px", color: "#4f46e5", border: "1px solid #e0e7ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ backgroundColor: "var(--accent-brand-light)", padding: "0.65rem", borderRadius: "10px", color: "var(--accent-brand)", border: "1px solid rgba(139, 125, 255, 0.28)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <Video size={20} />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <h4 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600, color: "#09090b", letterSpacing: "-0.01em" }}>Video Interview</h4>
-                  <span style={{ fontSize: "0.78rem", color: "#64748b" }}>AI video interview</span>
+                  <h4 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", letterSpacing: "-0.01em" }}>Video Interview</h4>
+                  <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>AI video interview</span>
                 </div>
                 <div className="format-arrow">
-                  <ArrowRight size={16} color="#94a3b8" />
+                  <ArrowRight size={16} color="var(--text-muted)" />
                 </div>
               </Link>
             </div>

@@ -173,9 +173,18 @@ async def test_retry_after_header_parsing():
 
 
 @pytest.mark.asyncio
-async def test_timeout_retry_and_normalization():
-    """Verify request timeout is retried and raises AITimeoutError after exhaustion."""
+async def test_timeout_is_normalized_and_not_retried():
+    """A timeout raises AITimeoutError after a single attempt.
+
+    Retrying a timeout charges the candidate a second full request budget to walk
+    the same slow path, which is how one interview turn came to cost 103s of
+    silence. Transient faults are still retried; see the 429 test above.
+    """
+    calls = 0
+
     async def mock_timeout_call():
+        nonlocal calls
+        calls += 1
         req = httpx.Request("POST", "https://api.gemini.com")
         raise httpx.TimeoutException("Connection timed out", request=req)
 
@@ -184,6 +193,7 @@ async def test_timeout_retry_and_normalization():
             mock_timeout_call, provider="gemini", max_retries=1, backoff_factor=0.01
         )
     assert "timed out" in exc_info.value.message
+    assert calls == 1, "a timeout must not be retried into a second full budget"
 
 
 @pytest.mark.asyncio

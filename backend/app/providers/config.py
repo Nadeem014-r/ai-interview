@@ -15,6 +15,39 @@ else:
     load_dotenv(override=False)
 
 
+# The one voice the interviewer speaks with, for the whole of every session.
+#
+# Callers name this explicitly rather than sending "default" and trusting it to
+# resolve here, so the session's voice is a stated choice visible in the request
+# and the logs instead of a fallback that drifts if a mapping changes. It lives
+# in this module, not in the Kokoro provider, so naming the voice does not drag
+# torch into the import graph of every module that needs the name.
+INTERVIEWER_VOICE_ID = os.getenv("INTERVIEWER_VOICE_ID", "en_us_female_senior")
+
+# How many Kokoro / Whisper jobs may run at once.
+#
+# Both are CPU-bound and are dispatched with asyncio.to_thread, whose default
+# executor permits roughly cpu_count+4 threads -- so N simultaneous candidates
+# previously started N inference jobs on the same cores. That does not degrade
+# gracefully: each job gets slower in proportion, and past a point every one of
+# them exceeds its request timeout, turning a busy minute into a minute of
+# failed transcriptions and unspoken questions.
+#
+# Small numbers on purpose. torch already parallelises a single job across
+# cores, so the throughput gain from a second concurrent job is modest while
+# the latency cost to both is not. The bounds are separate per engine so a
+# queue of TTS work cannot delay transcription, or the reverse.
+def _positive_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+TTS_MAX_CONCURRENCY = _positive_int("TTS_MAX_CONCURRENCY", 2)
+STT_MAX_CONCURRENCY = _positive_int("STT_MAX_CONCURRENCY", 2)
+
+
 @dataclass(frozen=True)
 class ProviderConfig:
     """Strongly typed configuration for real voice and audio providers."""

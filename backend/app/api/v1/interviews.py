@@ -328,6 +328,13 @@ async def create_interview(
     res_fetch = await db.execute(stmt_fetch)
     interview = res_fetch.scalars().first()
 
+    # Question one is spoken as soon as the candidate presses Begin, so start
+    # synthesising it now rather than waiting for the browser to ask. The page
+    # also pre-requests it during the countdown; both land on the same cached
+    # job instead of running Kokoro twice for identical audio.
+    if interview.mode in ("audio", "video"):
+        _prefetch_question_audio(first_q.question_text)
+
     return format_interview_out(interview, current_q=first_q, answers=[])
 
 @router.get("/history", response_model=list[InterviewOut])
@@ -381,8 +388,11 @@ async def get_interview_session(
         if rem <= 0:
             interview.status = "completed"
             interview.end_time = datetime.utcnow()
-            report_gen = ReportGenerator(db)
-            await report_gen.generate_interview_report(interview_id)
+            await db.commit()
+            # Detached: a page load that happens to be the one which notices the
+            # timer has run out should not block on an LLM call. The status
+            # endpoint reports progress and restarts it if this attempt is lost.
+            _start_report_generation(interview_id)
         await db.commit()
 
     # Load active question if in progress
@@ -675,8 +685,15 @@ async def submit_answer_turn(
         closing_msg = None
         term_reason = None
         if is_completed:
-            report_gen = ReportGenerator(db)
-            await report_gen.generate_interview_report(interview_id)
+            # Detached, not awaited. Building the report costs its own LLM call
+            # for the executive summary, and it was being charged to the last
+            # answer the candidate submits -- the one turn where they are most
+            # likely to close the tab, which also cancelled the generation.
+            # _start_report_generation is idempotent (reports.interview_id is
+            # unique and ReportGenerator returns the existing row), so the
+            # /finish and /report-status paths that already call it stay correct
+            # and simply find the work done or in flight.
+            _start_report_generation(interview_id)
             term_reason = updated_state.interview_stage or "completed"
             if updated_state.interview_stage == "early_conclusion":
                 cand_name = None
@@ -725,6 +742,31 @@ async def submit_answer_turn(
             interview_stage=updated_state.interview_stage
         )
 
+        # Start synthesising the line the candidate is about to hear, before
+        # this response is even serialised. The room asks for the same line a
+        # moment later and joins this job through the TTS cache.
+        #
+        # The composed line must match what the room actually speaks, or the
+        # cache is warmed for a string nobody requests. Audio mode prefixes the
+        # spoken reaction to the question in one utterance (see
+        # VoiceInterviewRoom's speak effect); video speaks the question alone.
+        # Keep these two rules in step.
+        #
+        # Nothing is spoken in text mode, and a coding turn replaces the voice
+        # and video rooms with the editor, so neither line is ever played.
+        # Synthesising them anyway held a bounded Kokoro slot for 10-25 s of CPU
+        # per turn, queueing ahead of lines other candidates were waiting to hear.
+        if (
+            next_q_out is not None
+            and interview.mode in ("audio", "video")
+            and next_q_out.question_type != "coding"
+        ):
+            ack = (eval_dict.get("interviewer_ack") or "").strip()
+            if interview.mode == "audio" and ack:
+                _prefetch_question_audio(f"{ack} {next_q_out.question_text}")
+            else:
+                _prefetch_question_audio(next_q_out.question_text)
+
         return AnswerTurnResponse(
             evaluation=_candidate_turn_evaluation(eval_dict),
             interviewer_ack=eval_dict.get("interviewer_ack") or None,
@@ -748,6 +790,40 @@ async def submit_answer_turn(
 # endpoint -- is a no-op at the database level. _REPORT_TASKS only keeps the
 # task object alive; asyncio drops a task nobody holds a reference to.
 _REPORT_TASKS: dict[int, asyncio.Task] = {}
+
+# Synthesis of the next question, started as soon as the question exists.
+#
+# Audio cannot be made before the question is chosen, but it need not wait for
+# the question to reach the browser and for the browser to ask for it. Starting
+# here overlaps synthesis with response serialisation, the network hop and the
+# room's render; the room's own request then joins this job through the TTS
+# cache rather than starting a second one. Purely an optimisation: if it fails
+# or never runs, the room's request synthesises exactly as before.
+_TTS_PREFETCH_TASKS: set[asyncio.Task] = set()
+
+
+def _prefetch_question_audio(text: str | None) -> None:
+    """Warm the TTS cache for a line the candidate is about to hear."""
+    if not text or not text.strip():
+        return
+
+    async def _run() -> None:
+        try:
+            from app.providers.config import INTERVIEWER_VOICE_ID
+            from app.voice.tts import TextToSpeechService
+
+            await TextToSpeechService.synthesize(text, voice_id=INTERVIEWER_VOICE_ID)
+        except Exception as exc:
+            # Never surfaced to the candidate: the room will ask for this line
+            # itself and get the real error then, with its own retry.
+            logger.info("tts_prefetch_skipped: %s", exc)
+
+    try:
+        task = asyncio.create_task(_run())
+    except RuntimeError:
+        return
+    _TTS_PREFETCH_TASKS.add(task)
+    task.add_done_callback(_TTS_PREFETCH_TASKS.discard)
 
 
 async def _generate_report_detached(interview_id: int) -> None:

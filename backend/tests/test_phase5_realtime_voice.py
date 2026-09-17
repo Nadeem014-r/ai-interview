@@ -205,10 +205,19 @@ async def test_phase5_multi_turn_voice_interview_and_completion():
         # Complete interview and generate report
         finish_res = await client.post(f"/api/v1/interviews/{int_id}/finish", headers=headers)
         assert finish_res.status_code == 200
-        rep_id = finish_res.json()["report_id"]
+        finish_payload = finish_res.json()
+        # Report generation is detached, so finishing reports either that the
+        # report is already built or that it is being built. It no longer holds
+        # the candidate on the request while an LLM writes the summary, so a
+        # null report_id here is the documented "processing" answer, not a
+        # failure -- the id is read from the report itself below.
+        assert finish_payload["status"] in ("ready", "processing")
+        rep_id = finish_payload["report_id"]
 
         rep_res = await client.get(f"/api/v1/reports/{int_id}", headers=headers)
         assert rep_res.status_code == 200
         report = rep_res.json()
-        assert report["id"] == rep_id
+        assert report["id"] is not None
+        if rep_id is not None:
+            assert report["id"] == rep_id
         assert report["overall_score"] > 0

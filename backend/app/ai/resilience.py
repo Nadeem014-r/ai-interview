@@ -91,7 +91,17 @@ async def execute_with_resilience(
     """
     Execute an async AI request function with bounded retries and exponential backoff.
     Permanent errors (401, 403, 400, 404) are raised immediately without retrying.
-    Transient errors (429, 500, 502, 503, 504, network drops, timeouts) are retried.
+    Transient errors (429, 500, 502, 503, 504, network drops) are retried.
+
+    Timeouts are not. A retry buys something only when the second attempt can go
+    differently, and an expired LLM_REQUEST_TIMEOUT_SECONDS budget means the
+    model is answering slowly, not that the request was lost -- so the retry
+    walks the same slow path and charges the candidate a second full budget for
+    it. Measured on the interview turn: two attempts at 25s each meant a single
+    slow evaluation blocked the turn for 51s, and a turn spends two calls in
+    sequence, so one turn cost 103s of silence before falling back. Failing after
+    one budget halves that worst case, and every caller on the interview path
+    already degrades honestly.
     """
     retries = max_retries if max_retries is not None else settings.LLM_MAX_RETRIES
     backoff = backoff_factor if backoff_factor is not None else settings.LLM_RETRY_BACKOFF_FACTOR
@@ -102,13 +112,8 @@ async def execute_with_resilience(
             return await coro_func()
         except httpx.TimeoutException as exc:
             attempt += 1
-            if attempt > retries:
-                logger.error(f"[{provider}] Operation '{operation_name}' timed out after {attempt} attempts: {exc}")
-                raise AITimeoutError(f"Request to provider '{provider}' timed out after {attempt} attempts.", provider=provider, raw_error=exc) from exc
-            
-            sleep_time = (backoff * (2 ** (attempt - 1))) + random.uniform(0, 0.1)
-            logger.warning(f"[{provider}] Timeout on attempt {attempt}/{retries} for '{operation_name}'. Retrying in {sleep_time:.2f}s...")
-            await asyncio.sleep(sleep_time)
+            logger.error(f"[{provider}] Operation '{operation_name}' timed out after {attempt} attempt(s): {exc}")
+            raise AITimeoutError(f"Request to provider '{provider}' timed out after {attempt} attempts.", provider=provider, raw_error=exc) from exc
 
         except httpx.NetworkError as exc:
             attempt += 1

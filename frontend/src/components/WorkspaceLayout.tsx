@@ -29,6 +29,13 @@ interface WorkspaceLayoutProps {
   sectionSubtitle?: string;
   hideHeader?: boolean;
   contentMaxWidth?: string;
+  /**
+   * A timed interview is on screen. Sidebar destinations are shown but not
+   * navigable, so a candidate cannot wander off mid-session into, say, the
+   * standalone Coding practice tool and lose the interview they are sitting.
+   * Sign out stays available -- this is a guard rail, not a trap.
+   */
+  lockNavigation?: boolean;
 }
 
 export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
@@ -36,7 +43,8 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
   sectionTitle,
   sectionSubtitle,
   hideHeader = false,
-  contentMaxWidth = "1160px"
+  contentMaxWidth = "1160px",
+  lockNavigation = false
 }) => {
   const router = useRouter();
   const pathname = usePathname();
@@ -96,7 +104,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
     if (pathname.startsWith("/history")) return "Interview History";
     if (pathname.startsWith("/reports")) return "Interview Intelligence";
     if (pathname.startsWith("/profile")) return "Account Settings";
-    if (pathname.startsWith("/coding")) return "Coding Sandbox";
+    if (pathname.startsWith("/coding")) return "Coding Practice";
     if (pathname.startsWith("/admin")) return "Admin Control Panel";
     return "Workspace";
   };
@@ -113,7 +121,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
   const userInitial = displayName.charAt(0).toUpperCase();
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", backgroundColor: "var(--bg-page)", color: "var(--text-primary)" }}>
+    <div style={{ display: "flex", minHeight: "100vh", backgroundColor: "transparent", color: "var(--text-primary)" }}>
       {/* Mobile Drawer Backdrop */}
       {mobileOpen && (
         <div
@@ -121,7 +129,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
           style={{
             position: "fixed",
             inset: 0,
-            backgroundColor: "rgba(9, 9, 11, 0.4)",
+            backgroundColor: "rgba(4, 5, 11, 0.62)",
             backdropFilter: "blur(4px)",
             WebkitBackdropFilter: "blur(4px)",
             zIndex: 90,
@@ -133,8 +141,11 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
       <aside
         style={{
           width: collapsed ? "68px" : "240px",
-          backgroundColor: "#ffffff",
-          borderRight: "1px solid #e4e4e7",
+          background: "linear-gradient(180deg, rgba(17, 19, 40, 0.92) 0%, rgba(10, 12, 26, 0.94) 100%)",
+          backdropFilter: "blur(20px) saturate(140%)",
+          WebkitBackdropFilter: "blur(20px) saturate(140%)",
+          borderRight: "1px solid var(--border-subtle)",
+          boxShadow: "1px 0 0 rgba(255, 255, 255, 0.04), 18px 0 48px -30px rgba(0, 0, 0, 0.9)",
           display: "flex",
           flexDirection: "column",
           position: "fixed",
@@ -151,7 +162,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
         <div
           style={{
             height: "58px",
-            borderBottom: "1px solid #f4f4f5",
+            borderBottom: "1px solid var(--border-subtle)",
             display: "flex",
             alignItems: "center",
             justifyContent: collapsed ? "center" : "space-between",
@@ -174,13 +185,13 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
                 width: "32px",
                 height: "32px",
                 borderRadius: "8px",
-                backgroundColor: "#09090b",
+                background: "linear-gradient(135deg, #6d5cff 0%, #a855f7 100%)",
                 color: "#ffffff",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 flexShrink: 0,
-                boxShadow: "0 1px 2px rgba(0,0,0,0.08)"
+                boxShadow: "0 6px 18px -6px rgba(124, 92, 255, 0.85), 0 1px 0 rgba(255, 255, 255, 0.25) inset"
               }}
             >
               <Sparkles size={17} strokeWidth={2.2} />
@@ -191,14 +202,14 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
                   style={{
                     fontSize: "0.95rem",
                     fontWeight: 700,
-                    color: "#09090b",
+                    color: "var(--text-primary)",
                     letterSpacing: "-0.025em",
                     lineHeight: 1.1
                   }}
                 >
                   OfferScript
                 </span>
-                <span style={{ fontSize: "0.65rem", color: "#71717a", fontWeight: 500 }}>
+                <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontWeight: 500 }}>
                   AI Placement Workspace
                 </span>
               </div>
@@ -212,7 +223,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
               style={{
                 background: "transparent",
                 border: "none",
-                color: "#71717a",
+                color: "var(--text-muted)",
                 cursor: "pointer",
                 padding: "0.25rem",
                 borderRadius: "4px",
@@ -237,7 +248,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
               style={{
                 background: "transparent",
                 border: "none",
-                color: "#71717a",
+                color: "var(--text-muted)",
                 cursor: "pointer",
                 padding: "0.3rem",
                 borderRadius: "4px",
@@ -262,7 +273,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
                   style={{
                     fontSize: "0.68rem",
                     fontWeight: 600,
-                    color: "#a1a1aa",
+                    color: "var(--text-tertiary)",
                     textTransform: "uppercase",
                     letterSpacing: "0.06em",
                     padding: "0 0.65rem 0.4rem"
@@ -275,12 +286,23 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
                 {group.items.map((item) => {
                   const active = isNavActive(item.href);
                   const Icon = item.icon;
+                  // During an interview the same row is rendered as plain text:
+                  // identical layout, but nothing to click.
+                  const Row: any = lockNavigation ? "div" : Link;
                   return (
-                    <Link
+                    <Row
                       key={item.href}
-                      href={item.href}
-                      title={collapsed ? item.label : undefined}
+                      {...(lockNavigation ? { "aria-disabled": true } : { href: item.href })}
+                      title={
+                        lockNavigation
+                          ? "Unavailable while an interview is in progress"
+                          : collapsed
+                          ? item.label
+                          : undefined
+                      }
                       style={{
+                        cursor: lockNavigation ? "not-allowed" : "pointer",
+                        opacity: lockNavigation && !active ? 0.45 : 1,
                         display: "flex",
                         alignItems: "center",
                         gap: "0.65rem",
@@ -290,18 +312,22 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
                         fontSize: "0.825rem",
                         fontWeight: active ? 600 : 500,
                         textDecoration: "none",
-                        color: active ? "#09090b" : "#52525b",
-                        backgroundColor: active ? "var(--accent-brand-light)" : "transparent",
+                        color: active ? "#ffffff" : "var(--text-secondary)",
+                        background: active
+                          ? "linear-gradient(100deg, rgba(124, 92, 255, 0.32) 0%, rgba(124, 92, 255, 0.10) 100%)"
+                          : "transparent",
+                        border: `1px solid ${active ? "rgba(139, 125, 255, 0.34)" : "transparent"}`,
+                        boxShadow: active ? "0 6px 20px -10px rgba(124, 92, 255, 0.9)" : "none",
                         transition: "all 0.15s ease"
                       }}
                     >
                       <Icon
                         size={17}
-                        color={active ? "var(--accent-brand)" : "#71717a"}
+                        color={active ? "var(--accent-brand)" : "var(--text-muted)"}
                         strokeWidth={active ? 2.2 : 1.8}
                       />
                       {!collapsed && <span>{item.label}</span>}
-                    </Link>
+                    </Row>
                   );
                 })}
               </div>
@@ -316,7 +342,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
                   style={{
                     fontSize: "0.68rem",
                     fontWeight: 600,
-                    color: "#a1a1aa",
+                    color: "var(--text-tertiary)",
                     textTransform: "uppercase",
                     letterSpacing: "0.06em",
                     padding: "0 0.65rem 0.4rem"
@@ -338,12 +364,15 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
                   fontSize: "0.825rem",
                   fontWeight: pathname.startsWith("/admin") ? 600 : 500,
                   textDecoration: "none",
-                  color: pathname.startsWith("/admin") ? "#09090b" : "#52525b",
-                  backgroundColor: pathname.startsWith("/admin") ? "var(--accent-brand-light)" : "transparent",
+                  color: pathname.startsWith("/admin") ? "#ffffff" : "var(--text-secondary)",
+                  background: pathname.startsWith("/admin")
+                    ? "linear-gradient(100deg, rgba(124, 92, 255, 0.32) 0%, rgba(124, 92, 255, 0.10) 100%)"
+                    : "transparent",
+                  border: `1px solid ${pathname.startsWith("/admin") ? "rgba(139, 125, 255, 0.34)" : "transparent"}`,
                   transition: "all 0.15s ease"
                 }}
               >
-                <Shield size={17} color={pathname.startsWith("/admin") ? "var(--accent-brand)" : "#71717a"} />
+                <Shield size={17} color={pathname.startsWith("/admin") ? "var(--accent-brand)" : "var(--text-muted)"} />
                 {!collapsed && <span>Admin Control</span>}
               </Link>
             </div>
@@ -353,7 +382,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
         {/* Bottom User Area */}
         <div
           style={{
-            borderTop: "1px solid #f4f4f5",
+            borderTop: "1px solid var(--border-subtle)",
             padding: "0.75rem 0.65rem",
             display: "flex",
             alignItems: "center",
@@ -378,11 +407,12 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
                 width: "28px",
                 height: "28px",
                 borderRadius: "50%",
-                backgroundColor: "#09090b",
+                background: "linear-gradient(135deg, #6d5cff 0%, #a855f7 100%)",
                 color: "#ffffff",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
+                boxShadow: "0 4px 14px -4px rgba(124, 92, 255, 0.8)",
                 fontSize: "0.75rem",
                 fontWeight: 700,
                 flexShrink: 0
@@ -396,7 +426,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
                   style={{
                     fontSize: "0.8rem",
                     fontWeight: 600,
-                    color: "#09090b",
+                    color: "var(--text-primary)",
                     whiteSpace: "nowrap",
                     overflow: "hidden",
                     textOverflow: "ellipsis"
@@ -407,7 +437,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
                 <span
                   style={{
                     fontSize: "0.68rem",
-                    color: "#71717a",
+                    color: "var(--text-muted)",
                     whiteSpace: "nowrap",
                     overflow: "hidden",
                     textOverflow: "ellipsis"
@@ -425,7 +455,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
               style={{
                 background: "transparent",
                 border: "none",
-                color: "#71717a",
+                color: "var(--text-muted)",
                 cursor: "pointer",
                 padding: "0.35rem",
                 borderRadius: "6px",
@@ -459,10 +489,10 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
           <header
             style={{
               height: "58px",
-              backgroundColor: "rgba(255, 255, 255, 0.9)",
-              backdropFilter: "blur(12px)",
-              WebkitBackdropFilter: "blur(12px)",
-              borderBottom: "1px solid #e4e4e7",
+              backgroundColor: "rgba(8, 10, 22, 0.72)",
+              backdropFilter: "blur(18px) saturate(140%)",
+              WebkitBackdropFilter: "blur(18px) saturate(140%)",
+              borderBottom: "1px solid var(--border-subtle)",
               padding: "0 1.5rem",
               display: "flex",
               alignItems: "center",
@@ -478,7 +508,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
                 onClick={() => setMobileOpen(!mobileOpen)}
                 style={{
                   background: "transparent",
-                  border: "1px solid #e4e4e7",
+                  border: "1px solid var(--border-subtle)",
                   borderRadius: "6px",
                   padding: "0.35rem",
                   cursor: "pointer",
@@ -495,7 +525,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
                   style={{
                     fontSize: "0.95rem",
                     fontWeight: 600,
-                    color: "#09090b",
+                    color: "var(--text-primary)",
                     margin: 0,
                     letterSpacing: "-0.01em"
                   }}
@@ -503,7 +533,7 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
                   {getHeaderTitle()}
                 </h1>
                 {sectionSubtitle && (
-                  <span style={{ fontSize: "0.72rem", color: "#71717a" }}>{sectionSubtitle}</span>
+                  <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{sectionSubtitle}</span>
                 )}
               </div>
             </div>
@@ -520,12 +550,12 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
             </div>
           </header>
         ) : (
-          <div className="mobile-header-bar-only" style={{ display: "none", height: "54px", borderBottom: "1px solid #e4e4e7", padding: "0 1rem", alignItems: "center", justifyContent: "space-between", backgroundColor: "#ffffff", position: "sticky", top: 0, zIndex: 40 }}>
+          <div className="mobile-header-bar-only" style={{ display: "none", height: "54px", borderBottom: "1px solid var(--border-subtle)", padding: "0 1rem", alignItems: "center", justifyContent: "space-between", backgroundColor: "rgba(8, 10, 22, 0.82)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", position: "sticky", top: 0, zIndex: 40 }}>
             <button
               onClick={() => setMobileOpen(!mobileOpen)}
               style={{
                 background: "transparent",
-                border: "1px solid #e4e4e7",
+                border: "1px solid var(--border-subtle)",
                 borderRadius: "6px",
                 padding: "0.35rem",
                 cursor: "pointer",
@@ -538,10 +568,10 @@ export const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
               {mobileOpen ? <X size={18} /> : <Menu size={18} />}
             </button>
             <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-              <div style={{ width: "26px", height: "26px", borderRadius: "6px", backgroundColor: "#09090b", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ width: "26px", height: "26px", borderRadius: "6px", background: "linear-gradient(135deg, #6d5cff 0%, #a855f7 100%)", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <Sparkles size={14} />
               </div>
-              <span style={{ fontSize: "0.9rem", fontWeight: 700, color: "#09090b" }}>OfferScript</span>
+              <span style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-primary)" }}>OfferScript</span>
             </div>
             <Link
               href="/interview/configure"

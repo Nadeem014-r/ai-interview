@@ -8,12 +8,13 @@ import io
 import os
 import logging
 import asyncio
+import weakref
 from typing import Optional, Dict, Any, Union
 import numpy as np
 import soundfile as sf
 
 from app.ai.base import STTProvider
-from app.providers.config import provider_config, ProviderConfig
+from app.providers.config import provider_config, ProviderConfig, STT_MAX_CONCURRENCY
 from app.providers.exceptions import STTProviderError
 
 logger = logging.getLogger("ai_interviewer.whisper_stt")
@@ -84,6 +85,20 @@ class WhisperSmallSTTProvider(STTProvider):
     """Local Whisper Small STT provider implementing standard STTProvider interface."""
 
     _asr_pipeline = None
+    # Bound on concurrent transcription, mirroring the Kokoro provider. See
+    # app/providers/config.py for why these are small and why the two engines
+    # get separate bounds rather than sharing one.
+    _sem_by_loop: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
+
+    @classmethod
+    def inference_slot(cls) -> asyncio.Semaphore:
+        """One transcription slot, used as `async with provider.inference_slot():`."""
+        loop = asyncio.get_running_loop()
+        sem = cls._sem_by_loop.get(loop)
+        if sem is None:
+            sem = asyncio.Semaphore(STT_MAX_CONCURRENCY)
+            cls._sem_by_loop[loop] = sem
+        return sem
 
     def __init__(self, config: Optional[ProviderConfig] = None):
         self.config = config or provider_config

@@ -28,10 +28,10 @@ export default function HistoryPage() {
   return (
     <WorkspaceLayout sectionTitle="Interview History" sectionSubtitle="Archived mock interview sessions and evaluation reports">
       <div style={{ marginBottom: "1.5rem" }}>
-        <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "#09090b", letterSpacing: "-0.02em", margin: 0 }}>
+        <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em", margin: 0 }}>
           Interview Session Archive
         </h2>
-        <p style={{ color: "#71717a", fontSize: "0.85rem", marginTop: "0.2rem" }}>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: "0.2rem" }}>
           Review detailed evaluation rubrics, question turn history, and recommendations from past interview runs.
         </p>
       </div>
@@ -44,9 +44,9 @@ export default function HistoryPage() {
         </div>
       ) : sessions.length === 0 ? (
         <div className="saas-card" style={{ padding: "3rem", textAlign: "center" }}>
-          <History size={36} color="#a1a1aa" style={{ marginBottom: "0.5rem" }} />
-          <h3 style={{ fontSize: "1rem", color: "#09090b" }}>No interviews recorded</h3>
-          <p style={{ color: "#71717a", fontSize: "0.85rem", marginBottom: "1.25rem" }}>Launch your first mock interview to generate performance telemetry.</p>
+          <History size={36} color="var(--text-tertiary)" style={{ marginBottom: "0.5rem" }} />
+          <h3 style={{ fontSize: "1rem", color: "var(--text-primary)" }}>No interviews recorded</h3>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "1.25rem" }}>Launch your first mock interview to generate performance telemetry.</p>
           <Link href="/interview/configure" className="btn btn-primary">
             <Play size={14} /> <span>Start New Interview</span>
           </Link>
@@ -56,7 +56,7 @@ export default function HistoryPage() {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
               <thead>
-                <tr style={{ borderBottom: "1px solid #e4e4e7", color: "#71717a", textAlign: "left", backgroundColor: "#fafafa" }}>
+                <tr style={{ borderBottom: "1px solid var(--border-subtle)", color: "var(--text-muted)", textAlign: "left", backgroundColor: "var(--bg-subtle)" }}>
                   <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>ID</th>
                   <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>Target Role</th>
                   <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>Format</th>
@@ -67,16 +67,18 @@ export default function HistoryPage() {
               </thead>
               <tbody>
                 {sessions.map((s) => (
-                  <tr key={s.id} style={{ borderBottom: "1px solid #f4f4f5", transition: "background-color 0.15s ease" }}>
-                    <td style={{ padding: "0.75rem 1rem", fontWeight: 600, color: "#09090b" }}>#{s.id}</td>
-                    <td style={{ padding: "0.75rem 1rem", fontWeight: 500, color: "#09090b" }}>
+                  <tr key={s.id} style={{ borderBottom: "1px solid var(--border-subtle)", transition: "background-color 0.15s ease" }}>
+                    <td style={{ padding: "0.75rem 1rem", fontWeight: 600, color: "var(--text-primary)" }}>#{s.id}</td>
+                    <td style={{ padding: "0.75rem 1rem", fontWeight: 500, color: "var(--text-primary)" }}>
                       {s.role_title || `Role #${s.role_id}`}
                     </td>
-                    <td style={{ padding: "0.75rem 1rem", color: "#71717a", textTransform: "capitalize" }}>
+                    <td style={{ padding: "0.75rem 1rem", color: "var(--text-muted)", textTransform: "capitalize" }}>
                       {s.interview_type} ({s.mode})
                     </td>
-                    <td style={{ padding: "0.75rem 1rem", color: "#71717a" }}>
-                      {new Date(s.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                    <td style={{ padding: "0.75rem 1rem", color: "var(--text-muted)" }}>
+                      {/* A finished session is dated by when it finished; one
+                          that has not run yet is dated by when it was set up. */}
+                      {new Date(s.end_time || s.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
                     </td>
                     <td style={{ padding: "0.75rem 1rem" }}>
                       <span className={`badge ${s.status === "completed" ? "badge-success" : s.status === "in_progress" ? "badge-warning" : "badge-neutral"}`}>

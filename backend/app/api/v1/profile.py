@@ -8,6 +8,17 @@ from app.schemas.auth import ProfileOut, ProfileUpdate
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
 
+# ``candidate_profiles`` has no experience_years column and this fix does not
+# add one -- an existing deployment's table would not gain it. The value lives
+# in the ``preferences`` JSON the table already carries, so it round-trips
+# instead of being accepted and discarded, which is what used to happen.
+_EXPERIENCE_YEARS_KEY = "experience_years"
+
+
+def _read_experience_years(profile: CandidateProfile):
+    value = (profile.preferences or {}).get(_EXPERIENCE_YEARS_KEY)
+    return float(value) if isinstance(value, (int, float)) else None
+
 @router.get("", response_model=ProfileOut)
 async def get_profile(
     payload: dict = Depends(get_current_user_payload),
@@ -37,6 +48,7 @@ async def get_profile(
         headline=profile.headline,
         target_role=profile.target_role,
         experience_level=profile.experience_level or "entry",
+        experience_years=_read_experience_years(profile),
         bio=profile.bio,
         phone=profile.phone,
         university=profile.university,
@@ -77,9 +89,25 @@ async def update_profile(
     if "full_name" in data_dict and data_dict["full_name"]:
         user.full_name = data_dict.pop("full_name")
 
+    # Validated as >= 0 by ProfileUpdate, so anything reaching here is real.
+    has_experience_years = _EXPERIENCE_YEARS_KEY in data_dict
+    experience_years = data_dict.pop(_EXPERIENCE_YEARS_KEY, None)
+
     for field, val in data_dict.items():
         if hasattr(profile, field):
             setattr(profile, field, val)
+
+    # Merged after the loop above, which may have replaced `preferences`
+    # wholesale with the copy the client sent back.
+    if has_experience_years:
+        prefs = dict(profile.preferences or {})
+        if experience_years is None:
+            prefs.pop(_EXPERIENCE_YEARS_KEY, None)
+        else:
+            prefs[_EXPERIENCE_YEARS_KEY] = experience_years
+        # Reassigned rather than mutated in place so SQLAlchemy sees the change
+        # to this JSON column.
+        profile.preferences = prefs
 
     await db.commit()
     await db.refresh(profile)
@@ -93,6 +121,7 @@ async def update_profile(
         headline=profile.headline,
         target_role=profile.target_role,
         experience_level=profile.experience_level or "entry",
+        experience_years=_read_experience_years(profile),
         bio=profile.bio,
         phone=profile.phone,
         university=profile.university,

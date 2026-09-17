@@ -19,6 +19,12 @@ interface InterviewCountdownProps {
   mode: string;
   roleTitle?: string;
   companyName?: string;
+  /**
+   * The countdown has finished and the screen is now waiting on the candidate
+   * to press Begin. Only the wording changes: "starting now" would be a lie
+   * when nothing starts until the button is pressed.
+   */
+  ready?: boolean;
 }
 
 type Phase = "settle" | "guidance" | "ready" | "launch";
@@ -59,7 +65,8 @@ export const InterviewCountdown: React.FC<InterviewCountdownProps> = ({
   totalSeconds = 30,
   mode,
   roleTitle,
-  companyName
+  companyName,
+  ready = false
 }) => {
   const phase = getPhase(seconds);
   const guidance = MODE_GUIDANCE[mode] || MODE_GUIDANCE.text;
@@ -69,8 +76,9 @@ export const InterviewCountdown: React.FC<InterviewCountdownProps> = ({
   const elapsedRatio = Math.min(1, Math.max(0, (safeTotal - seconds) / safeTotal));
   const dashOffset = CIRCUMFERENCE * (1 - elapsedRatio);
 
-  const heading =
-    phase === "settle"
+  const heading = ready
+    ? "You're ready to begin"
+    : phase === "settle"
       ? "Get ready"
       : phase === "guidance"
       ? guidance.title
@@ -78,8 +86,9 @@ export const InterviewCountdown: React.FC<InterviewCountdownProps> = ({
       ? "Your interviewer is ready"
       : "Starting now";
 
-  const subline =
-    phase === "settle"
+  const subline = ready
+    ? "Press Begin Interview when you are ready. The first question comes then."
+    : phase === "settle"
       ? "Take a deep breath. Your interview begins soon."
       : phase === "guidance"
       ? guidance.line
@@ -93,10 +102,10 @@ export const InterviewCountdown: React.FC<InterviewCountdownProps> = ({
       style={{
         padding: "3rem 2rem 2.75rem",
         textAlign: "center",
-        background: "linear-gradient(180deg, #ffffff 0%, #fbfbfe 100%)",
-        border: "1px solid #e4e4e7",
+        background: "linear-gradient(180deg, rgba(28, 31, 58, 0.85) 0%, rgba(16, 18, 38, 0.9) 100%)",
+        border: "1px solid var(--border-subtle)",
         borderRadius: "20px",
-        boxShadow: "0 10px 34px -12px rgba(79, 70, 229, 0.14), 0 2px 8px rgba(0,0,0,0.03)",
+        boxShadow: "0 24px 60px -20px rgba(0, 0, 0, 0.9), 0 0 60px -18px rgba(124, 92, 255, 0.45)",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -108,7 +117,11 @@ export const InterviewCountdown: React.FC<InterviewCountdownProps> = ({
       }}
       role="status"
       aria-live="polite"
-      aria-label={`${heading}. Interview begins in ${seconds} seconds.`}
+      aria-label={
+        ready
+          ? `${heading}. Press Begin Interview to start.`
+          : `${heading}. Preparation time remaining: ${seconds} seconds.`
+      }
     >
       {/* Soft ambient wash — decorative only */}
       <div
@@ -135,11 +148,11 @@ export const InterviewCountdown: React.FC<InterviewCountdownProps> = ({
           gap: "0.45rem",
           padding: "0.35rem 0.85rem",
           borderRadius: "9999px",
-          border: "1px solid #e4e4e7",
-          backgroundColor: "#ffffff",
+          border: "1px solid var(--border-subtle)",
+          backgroundColor: "var(--bg-surface)",
           fontSize: "0.75rem",
           fontWeight: 600,
-          color: "#52525b",
+          color: "var(--text-secondary)",
           letterSpacing: "0.01em"
         }}
       >
@@ -181,7 +194,7 @@ export const InterviewCountdown: React.FC<InterviewCountdownProps> = ({
           style={{ position: "absolute", transform: "rotate(-90deg)" }}
           aria-hidden="true"
         >
-          <circle cx="98" cy="98" r={RADIUS} stroke="#eceafd" strokeWidth="6" fill="none" />
+          <circle cx="98" cy="98" r={RADIUS} stroke="rgba(255, 255, 255, 0.08)" strokeWidth="6" fill="none" />
           <circle
             cx="98"
             cy="98"
@@ -202,22 +215,22 @@ export const InterviewCountdown: React.FC<InterviewCountdownProps> = ({
           style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center" }}
         >
           <span
-            key={seconds}
-            className={phase === "launch" ? "countdown-pop" : undefined}
+            key={ready ? "ready" : seconds}
+            className={phase === "launch" && !ready ? "countdown-pop" : undefined}
             style={{
               display: "block",
-              fontSize: phase === "launch" ? "5.25rem" : "3.4rem",
+              fontSize: ready ? "2.1rem" : phase === "launch" ? "5.25rem" : "3.4rem",
               fontWeight: 800,
-              color: "#09090b",
+              color: "var(--text-primary)",
               lineHeight: 1,
               letterSpacing: "-0.04em",
               fontVariantNumeric: "tabular-nums",
               transition: "font-size 0.35s cubic-bezier(0.16, 1, 0.3, 1)"
             }}
           >
-            {seconds}
+            {ready ? "Ready" : seconds}
           </span>
-          {phase !== "launch" && (
+          {!ready && phase !== "launch" && (
             <span
               style={{
                 marginTop: "0.35rem",
@@ -225,7 +238,7 @@ export const InterviewCountdown: React.FC<InterviewCountdownProps> = ({
                 fontWeight: 700,
                 letterSpacing: "0.12em",
                 textTransform: "uppercase",
-                color: "#a1a1aa"
+                color: "var(--text-tertiary)"
               }}
             >
               Seconds
@@ -245,14 +258,14 @@ export const InterviewCountdown: React.FC<InterviewCountdownProps> = ({
             marginBottom: "0.55rem"
           }}
         >
-          {phase === "settle" && <Wind size={17} />}
-          {phase === "guidance" && guidance.icon}
-          {phase === "ready" && <ShieldCheck size={17} />}
+          {!ready && phase === "settle" && <Wind size={17} />}
+          {!ready && phase === "guidance" && guidance.icon}
+          {(ready || phase === "ready") && <ShieldCheck size={17} />}
           <h3
             style={{
               fontSize: "1.4rem",
               fontWeight: 700,
-              color: "#09090b",
+              color: "var(--text-primary)",
               margin: 0,
               letterSpacing: "-0.025em"
             }}
@@ -262,7 +275,7 @@ export const InterviewCountdown: React.FC<InterviewCountdownProps> = ({
         </div>
 
         {subline && (
-          <p style={{ fontSize: "0.95rem", color: "#71717a", margin: 0, lineHeight: 1.55 }}>{subline}</p>
+          <p style={{ fontSize: "0.95rem", color: "var(--text-muted)", margin: 0, lineHeight: 1.55 }}>{subline}</p>
         )}
       </div>
 
@@ -280,7 +293,7 @@ export const InterviewCountdown: React.FC<InterviewCountdownProps> = ({
                 width: p === phase ? "28px" : "8px",
                 height: "5px",
                 borderRadius: "9999px",
-                backgroundColor: reached ? accent : "#e4e4e7",
+                backgroundColor: reached ? accent : "var(--border-subtle)",
                 opacity: reached ? (p === phase ? 1 : 0.45) : 1,
                 transition: "width 0.4s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.4s ease, opacity 0.4s ease"
               }}

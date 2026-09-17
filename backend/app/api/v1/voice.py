@@ -5,6 +5,7 @@ import io
 from app.core.security import get_current_user_payload
 from app.voice.stt import SpeechToTextService
 from app.voice.tts import TextToSpeechService
+from app.providers.config import INTERVIEWER_VOICE_ID
 from app.schemas.interview import VoiceSynthesizeRequest
 
 logger = logging.getLogger("ai_interviewer.voice_api")
@@ -62,24 +63,20 @@ async def synthesize_text(
         raise HTTPException(status_code=400, detail="Text cannot be empty for TTS synthesis.")
 
     try:
-        audio_bytes = await TextToSpeechService.synthesize(req.text, voice_id=req.voice_id or "default")
+        audio_bytes = await TextToSpeechService.synthesize(
+            req.text, voice_id=req.voice_id or INTERVIEWER_VOICE_ID
+        )
     except Exception as e:
-        # Simulated audio may stand in only where mocks are permitted. In
-        # production it would return a 440 Hz tone as the interviewer's voice
-        # under HTTP 200, hiding the outage from the caller.
-        from app.ai.factory import _implicit_mock_allowed
+        # No simulated audio here, in any environment. This endpoint speaks as
+        # the interviewer, and the mock's 440 Hz tone returned under HTTP 200
+        # was indistinguishable from success to the caller: the browser cached
+        # it, played it, and the candidate heard a beep -- or, when the caller
+        # treated it as a failure, heard a different voice for that one line.
+        # Reporting the outage lets the client retry the same voice instead.
+        logger.error(f"TextToSpeechService error: {e}")
+        raise HTTPException(status_code=503, detail="Speech synthesis is currently unavailable.")
 
-        if not _implicit_mock_allowed():
-            logger.error(f"TextToSpeechService error: {e}")
-            raise HTTPException(status_code=503, detail="Speech synthesis is currently unavailable.")
-        logger.warning(f"TextToSpeechService error: {e}. Attempting fallback synthesis.")
-        try:
-            from app.ai.mock_provider import MockTTSProvider
-            audio_bytes = await MockTTSProvider().synthesize_speech(req.text, voice_id=req.voice_id or "default")
-        except Exception as fb_err:
-            logger.error(f"TTS fallback also failed: {fb_err}")
-            raise HTTPException(status_code=500, detail="TTS synthesis failed.")
-    
+
     # Detect audio format from magic bytes
     if audio_bytes.startswith(b"ID3") or (len(audio_bytes) > 1 and audio_bytes[0] == 0xFF and (audio_bytes[1] & 0xE0) == 0xE0):
         media_type = "audio/mpeg"

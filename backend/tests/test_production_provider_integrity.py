@@ -308,8 +308,17 @@ async def test_tts_route_does_not_serve_simulated_audio_in_production(production
 
 
 @pytest.mark.asyncio
-async def test_tts_route_still_falls_back_outside_production(development):
-    """The designed offline behaviour is untouched in development."""
+async def test_tts_route_reports_failure_in_every_environment(development):
+    """A TTS outage is reported, never papered over with simulated audio.
+
+    This route speaks as the interviewer, and the mock provider's 440 Hz tone
+    was previously returned under HTTP 200 in development. The caller could not
+    tell that apart from real speech: it cached the tone and played it, or --
+    treating the oddity as a failure -- spoke that one line with the browser's
+    own voice, so the interviewer changed person mid-session. Reporting the
+    outage lets the client retry and get the same voice, which is why the
+    development carve-out is gone rather than merely disabled in production.
+    """
     from httpx import ASGITransport, AsyncClient
     from app.main import app
     from app.voice.tts import TextToSpeechService
@@ -323,5 +332,5 @@ async def test_tts_route_still_falls_back_outside_production(development):
         headers = await _authenticate(client)
         res = await client.post("/api/v1/voice/tts", json={"text": "Hello"}, headers=headers)
 
-    assert res.status_code == 200
-    assert len(res.content) > 0
+    assert res.status_code == 503
+    assert "audio" not in res.headers.get("content-type", "")

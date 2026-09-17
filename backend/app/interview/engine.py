@@ -414,6 +414,14 @@ class AdaptiveInterviewEngine:
         )
 
         next_question: Optional[Question] = None
+        # Whether this turn has already spent its provider call on a question.
+        # A turn is allowed one: the evaluation, then one question. When the
+        # follow-up below is generated and then rejected as a duplicate, the
+        # standard path used to generate again -- a third provider round trip
+        # for a turn the candidate is already waiting through, and one that can
+        # return a duplicate just as easily. The local selection path is used
+        # instead, and it cannot repeat an asked question.
+        question_llm_call_spent = False
 
         if should_follow_up:
             state.interview_stage = "adaptive_probe" if last_eval_score < 7.0 else "deep_dive"
@@ -429,11 +437,37 @@ class AdaptiveInterviewEngine:
                 asked_texts=asked_texts,
                 memory=memory
             )
+            question_llm_call_spent = True
 
             candidate_q_text = follow_up_data.get("question_text", "").strip()
 
             # Strict duplicate gate for follow-up questions
             is_dup = is_duplicate_question(candidate_q_text, asked_texts) or MemoryManager.is_semantic_duplicate(candidate_q_text, memory)
+
+            if candidate_q_text and is_dup:
+                # The generated probe repeats something already asked. Before
+                # abandoning the follow-up, try the deterministic probe for this
+                # same topic and reason: it is local, it is grounded in the
+                # answer that triggered the follow-up, and it keeps the turn on
+                # the thread the interviewer was pulling.
+                det = FollowUpEngine.generate_deterministic_follow_up(
+                    topic=state.current_topic,
+                    reason_category=reason_cat,
+                    candidate_answer=last_answer_text or "",
+                    target_level=interview.target_level,
+                    eval_dict=last_eval_dict,
+                    asked_texts=asked_texts,
+                    memory=memory
+                )
+                det_text = (det.get("question_text") or "").strip()
+                if det_text and not (
+                    is_duplicate_question(det_text, asked_texts)
+                    or MemoryManager.is_semantic_duplicate(det_text, memory)
+                ):
+                    follow_up_data = det
+                    candidate_q_text = det_text
+                    is_dup = False
+
             if candidate_q_text and not is_dup:
                 next_question = Question(
                     company_id=interview.company_id,
@@ -521,7 +555,8 @@ class AdaptiveInterviewEngine:
                 interview_type=interview.interview_type,
                 resume_context=resume_context_str,
                 eval_dict=last_eval_dict,
-                memory=memory
+                memory=memory,
+                allow_llm_generation=not question_llm_call_spent
             )
 
         state.current_question_id = next_question.id if next_question else None

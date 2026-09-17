@@ -34,6 +34,12 @@ class ProfileUpdate(BaseModel):
     headline: Optional[str] = None
     target_role: Optional[str] = None
     experience_level: Optional[str] = "entry"
+    # Nobody has a negative amount of experience. The field used to be absent
+    # from this model entirely, so a PUT carrying -0.5 was accepted with a 200
+    # and the value silently dropped; it is now declared and constrained, so an
+    # impossible value is rejected outright rather than quietly rewritten to 0.
+    # Half-years stay valid, which is why this is a float and not an int.
+    experience_years: Optional[float] = Field(default=None, ge=0)
     bio: Optional[str] = None
     phone: Optional[str] = None
     university: Optional[str] = None
@@ -56,6 +62,7 @@ class ProfileOut(BaseModel):
     headline: Optional[str] = None
     target_role: Optional[str] = None
     experience_level: str = "entry"
+    experience_years: Optional[float] = None
     bio: Optional[str] = None
     phone: Optional[str] = None
     university: Optional[str] = None

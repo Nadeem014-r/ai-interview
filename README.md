@@ -71,11 +71,36 @@ docker-compose up --build
 
 ---
 
+## 🖥️ GPU / CPU Notes
+
+Voice inference (Whisper STT, Kokoro TTS) runs locally via `torch` — no external API cost, but it needs RAM/CPU (or GPU) on the host.
+
+- **CPU (default)**: `WHISPER_DEVICE=cpu` in `.env`. No extra setup — this is what `requirements.txt` installs out of the box.
+- **GPU**: Set `WHISPER_DEVICE=cuda` and install a CUDA-enabled build of `torch` matching the lab machine's driver **before** `pip install -r requirements.txt` (see [pytorch.org/get-started](https://pytorch.org/get-started/locally/)), then verify with:
+  ```bash
+  python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+  ```
+- Kokoro TTS uses whatever device `torch` defaults to; it has not been wired to a `KOKORO_DEVICE` setting in this codebase, so it currently runs on CPU even when Whisper is set to `cuda`.
+- `PREWARM_VOICE_MODELS=true` loads both models at startup instead of on the first interview (recommended for demos — a cold Kokoro load takes roughly a minute).
+
+---
+
 ## 🧪 Running Automated Tests
 ```bash
 cd backend
 pytest
 ```
+
+---
+
+## ⚠️ Known Limitations
+- Kokoro TTS has no explicit GPU device switch (see GPU/CPU Notes above) — it runs on CPU regardless of `WHISPER_DEVICE`.
+- The background job-description scraper (`ENABLE_BACKGROUND_SCRAPER`) depends on external careers sites that commonly block or rate-limit automated requests.
+- `MockLLMProvider` / `LLM_ENABLE_FALLBACK=false` by design: if a real provider is unreachable and no fallback is enabled, affected requests fail closed rather than serving fabricated content — see the inline note in `.env.example`.
+- Local voice inference is CPU-bound by default; concurrent interview sessions on a single low-resource machine will see slower transcription/synthesis (tunable via `TTS_MAX_CONCURRENCY` / `STT_MAX_CONCURRENCY`).
+
+## 📌 Current Project Status
+Actively developed university placement pilot. Core interview flow (text, audio, video, coding) and the deterministic scoring engine are implemented and covered by the `backend/tests` suite (`pytest`). See [`PROJECT_TECHNICAL_REPORT.md`](PROJECT_TECHNICAL_REPORT.md) and [`docs/roadmap/LEARNING_ROADMAP.md`](docs/roadmap/LEARNING_ROADMAP.md) for a fuller status and design history.
 
 ---
 

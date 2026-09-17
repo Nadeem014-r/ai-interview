@@ -44,11 +44,11 @@ export default function CompanyRolesPage() {
   return (
     <WorkspaceLayout sectionTitle="Target Roles" sectionSubtitle="Role requirements and interview preparation">
       <div style={{ marginBottom: "1.5rem" }}>
-        <Link href="/companies" style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "#71717a", textDecoration: "none", fontSize: "0.825rem", fontWeight: 500, marginBottom: "0.5rem" }}>
+        <Link href="/companies" style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--text-muted)", textDecoration: "none", fontSize: "0.825rem", fontWeight: 500, marginBottom: "0.5rem" }}>
           <ArrowLeft size={14} /> Back to Companies
         </Link>
-        <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "#09090b", letterSpacing: "-0.02em", margin: 0 }}>Available Target Roles</h2>
-        <p style={{ color: "#71717a", fontSize: "0.85rem", marginTop: "0.2rem" }}>
+        <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em", margin: 0 }}>Available Target Roles</h2>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: "0.2rem" }}>
           Compare real company requirements against your resume evidence and launch role-tailored technical practice.
         </p>
       </div>
@@ -60,9 +60,9 @@ export default function CompanyRolesPage() {
         </div>
       ) : roles.length === 0 ? (
         <div className="saas-card" style={{ padding: "3rem", textAlign: "center" }}>
-          <Briefcase size={36} color="#a1a1aa" style={{ marginBottom: "0.5rem" }} />
-          <h3 style={{ fontSize: "1rem", color: "#09090b" }}>No specific roles listed</h3>
-          <p style={{ color: "#71717a", fontSize: "0.85rem" }}>You can configure a custom mock interview from the configuration page.</p>
+          <Briefcase size={36} color="var(--text-tertiary)" style={{ marginBottom: "0.5rem" }} />
+          <h3 style={{ fontSize: "1rem", color: "var(--text-primary)" }}>No specific roles listed</h3>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>You can configure a custom mock interview from the configuration page.</p>
           <Link href="/interview/configure" className="btn btn-primary" style={{ marginTop: "1rem" }}>
             Configure Custom Session
           </Link>
@@ -78,15 +78,15 @@ export default function CompanyRolesPage() {
               <div key={r.id} className="saas-card" style={{ padding: "1.35rem 1.5rem", display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "1rem" }}>
                 <div style={{ maxWidth: "660px", flex: 1 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.35rem", flexWrap: "wrap" }}>
-                    <h3 style={{ fontSize: "1.05rem", fontWeight: 600, color: "#09090b", margin: 0 }}>{r.title}</h3>
+                    <h3 style={{ fontSize: "1.05rem", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>{r.title}</h3>
                     <span className="badge badge-neutral" style={{ textTransform: "capitalize" }}>{r.level}</span>
                     {matchScore !== null && (
                       <span
                         className="badge"
                         style={{
-                          backgroundColor: matchScore >= 70 ? "#ecfdf5" : matchScore > 0 ? "#ede9fe" : "#f4f4f5",
-                          color: matchScore >= 70 ? "#059669" : matchScore > 0 ? "#6366f1" : "#71717a",
-                          border: `1px solid ${matchScore >= 70 ? "#a7f3d0" : matchScore > 0 ? "#ddd6fe" : "#e4e4e7"}`,
+                          backgroundColor: matchScore >= 70 ? "var(--accent-emerald-light)" : matchScore > 0 ? "var(--accent-brand-light)" : "var(--bg-subtle)",
+                          color: matchScore >= 70 ? "var(--accent-emerald)" : matchScore > 0 ? "var(--accent-brand)" : "var(--text-muted)",
+                          border: `1px solid ${matchScore >= 70 ? "rgba(52, 211, 153, 0.32)" : matchScore > 0 ? "rgba(139, 125, 255, 0.28)" : "var(--border-subtle)"}`,
                           fontWeight: 700
                         }}
                       >
@@ -95,18 +95,18 @@ export default function CompanyRolesPage() {
                     )}
                   </div>
 
-                  <p style={{ color: "#71717a", fontSize: "0.825rem", marginBottom: "0.75rem", lineHeight: 1.5 }}>{r.description}</p>
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.825rem", marginBottom: "0.75rem", lineHeight: 1.5 }}>{r.description}</p>
 
                   {/* Real Matched vs Missing Requirements Comparison */}
                   {match && (match.matched_skills.length > 0 || match.missing_skills.length > 0) ? (
                     <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginTop: "0.5rem" }}>
                       {match.what_you_have && match.what_you_have.length > 0 && (
                         <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexWrap: "wrap", fontSize: "0.76rem" }}>
-                          <span style={{ color: "#059669", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "2px" }}>
+                          <span style={{ color: "var(--accent-emerald)", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "2px" }}>
                             <CheckCircle2 size={12} /> You have:
                           </span>
                           {match.what_you_have.map((s, idx) => (
-                            <span key={idx} className="badge" style={{ backgroundColor: "#ecfdf5", color: "#059669", border: "1px solid #a7f3d0", fontSize: "0.72rem" }}>
+                            <span key={idx} className="badge" style={{ backgroundColor: "var(--accent-emerald-light)", color: "var(--accent-emerald)", border: "1px solid rgba(52, 211, 153, 0.32)", fontSize: "0.72rem" }}>
                               {s}
                             </span>
                           ))}
@@ -115,11 +115,11 @@ export default function CompanyRolesPage() {
 
                       {match.what_you_are_missing && match.what_you_are_missing.length > 0 && (
                         <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexWrap: "wrap", fontSize: "0.76rem" }}>
-                          <span style={{ color: "#dc2626", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "2px" }}>
+                          <span style={{ color: "var(--accent-rose)", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "2px" }}>
                             <XCircle size={12} /> Missing:
                           </span>
                           {match.what_you_are_missing.map((s, idx) => (
-                            <span key={idx} className="badge" style={{ backgroundColor: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", fontSize: "0.72rem" }}>
+                            <span key={idx} className="badge" style={{ backgroundColor: "var(--accent-rose-light)", color: "var(--accent-rose)", border: "1px solid rgba(251, 113, 133, 0.32)", fontSize: "0.72rem" }}>
                               {s}
                             </span>
                           ))}
@@ -135,7 +135,7 @@ export default function CompanyRolesPage() {
                   )}
 
                   {!isEligible && (
-                    <div style={{ marginTop: "0.75rem", padding: "0.5rem 0.75rem", backgroundColor: "#fffbeb", border: "1px solid #fef3c7", borderRadius: "8px", color: "#b45309", fontSize: "0.76rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                    <div style={{ marginTop: "0.75rem", padding: "0.5rem 0.75rem", backgroundColor: "var(--accent-amber-light)", border: "1px solid rgba(251, 191, 36, 0.32)", borderRadius: "8px", color: "var(--accent-amber)", fontSize: "0.76rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
                       <AlertCircle size={13} />
                       <span>Insufficient resume evidence to generate technical questions for this role.</span>
                     </div>

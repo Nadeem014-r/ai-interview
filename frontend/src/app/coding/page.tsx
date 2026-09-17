@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React from "react";
 import { WorkspaceLayout } from "@/components/WorkspaceLayout";
 import { MonacoCodingRoom } from "@/components/MonacoCodingRoom";
 
@@ -9,29 +9,26 @@ const PRACTICE_QUESTION =
   "contains no repeated characters. Explain your approach and its complexity in comments.";
 
 export default function CodingPracticePage() {
-  const [submitted, setSubmitted] = useState(false);
-
   return (
     <WorkspaceLayout
       sectionTitle="Coding Practice"
       sectionSubtitle="Practise in the same workspace used during an interview"
     >
       <div style={{ marginBottom: "1.25rem" }}>
-        <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "#09090b", letterSpacing: "-0.02em", margin: 0 }}>
-          Coding Workspace
+        <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em", margin: 0 }}>
+          Practice Workspace
         </h2>
-        <p style={{ color: "#71717a", fontSize: "0.85rem", marginTop: "0.2rem" }}>
-          A standalone copy of the in-interview editor. Nothing written here is compiled, run or
-          recorded &mdash; it is for getting used to the workspace before a real session.
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: "0.2rem" }}>
+          A standalone copy of the in-interview editor, for getting used to the workspace before a
+          real session. Nothing written here is compiled, run, saved, submitted or assessed. Coding
+          questions inside an interview appear in the interview itself, not here.
         </p>
       </div>
 
       <MonacoCodingRoom
         questionText={PRACTICE_QUESTION}
         expectedConcepts={["Sliding window", "Two pointers", "O(n) time complexity"]}
-        onCodeSubmit={() => setSubmitted(true)}
-        submitting={false}
-        submitted={submitted}
+        practice
       />
     </WorkspaceLayout>
   );

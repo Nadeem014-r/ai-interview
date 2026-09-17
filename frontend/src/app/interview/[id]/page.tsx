@@ -5,16 +5,20 @@ import { useParams, useRouter } from "next/navigation";
 import { WorkspaceLayout } from "@/components/WorkspaceLayout";
 import { apiRequest } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+import { armInterviewAudio, fetchInterviewerAudio } from "@/lib/tts";
 import { InterviewSession, Question, AnswerItem } from "@/types";
 import { InterviewTimer } from "@/components/InterviewTimer";
-import { AudioRecorder } from "@/components/AudioRecorder";
 import { VideoInteractionRoom } from "@/components/VideoInteractionRoom";
 import { VoiceInterviewRoom } from "@/components/VoiceInterviewRoom";
 import { InterviewCountdown } from "@/components/InterviewCountdown";
 import { MonacoCodingRoom } from "@/components/MonacoCodingRoom";
 import { Send, ChevronDown, ChevronUp, Bot, Sparkles, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 
-type InterviewLifecycle = "LOADING" | "PRE_START" | "ACTIVE" | "CONCLUDING" | "REPORT_GENERATING" | "COMPLETED";
+// PRE_START is the preparation countdown and READY is the state it lands in
+// once the countdown has actually run out. They are separate because the
+// single Begin control only exists in READY: while PRE_START is on screen
+// there is nothing to press, so the preparation window cannot be skipped.
+type InterviewLifecycle = "LOADING" | "PRE_START" | "READY" | "ACTIVE" | "CONCLUDING" | "REPORT_GENERATING" | "COMPLETED";
 
 // Standard preparation window before the first question, identical for text,
 // voice and video so every mode gets the same run-up.
@@ -75,43 +79,53 @@ export default function InterviewInteractionPage() {
     }
   }, [sessionId]);
 
-  // Pre-start preparation countdown (30s across text, audio and video)
+  // Pre-start preparation countdown (30s across text, audio and video).
+  //
+  // The countdown no longer starts the interview by itself. Browsers refuse
+  // programmatic audio until the document has been interacted with, and a timer
+  // is not an interaction: on a freshly opened tab the first question's audio
+  // was rejected and that one line was spoken by the browser's own voice
+  // instead of the interviewer's. The candidate now presses Begin, which is a
+  // real gesture, and arming the audio inside it covers every line after it.
   useEffect(() => {
     if (lifecycle !== "PRE_START") return;
-
-    // Seamlessly unlock browser audio context on any interaction during preparation
-    const unlockAudio = () => {
-      try {
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioCtx) {
-          const ctx = new AudioCtx();
-          ctx.resume().catch(() => {});
-        }
-      } catch (e) {}
-    };
-
-    window.addEventListener("click", unlockAudio, { once: true });
-    window.addEventListener("touchstart", unlockAudio, { once: true });
-    window.addEventListener("keydown", unlockAudio, { once: true });
 
     const interval = setInterval(() => {
       setPreStartSeconds((prev) => {
         if (prev <= 1) {
           clearInterval(interval);
-          updateLifecycle("ACTIVE");
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
 
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener("click", unlockAudio);
-      window.removeEventListener("touchstart", unlockAudio);
-      window.removeEventListener("keydown", unlockAudio);
-    };
+    return () => clearInterval(interval);
   }, [lifecycle]);
+
+  // Countdown exhausted: move to READY, which is the only state that offers a
+  // Begin control. Nothing starts here -- the candidate still has to press it.
+  useEffect(() => {
+    if (lifecycle === "PRE_START" && preStartSeconds === 0) {
+      updateLifecycle("READY");
+    }
+  }, [lifecycle, preStartSeconds]);
+
+  // Begin the interview from a genuine click, so interviewer audio is armed
+  // before the first question is spoken.
+  const handleBeginInterview = async () => {
+    // Only reachable from READY, so a stray call during the countdown -- or a
+    // second click on the same button -- cannot cut the preparation short.
+    if (lifecycleRef.current !== "READY") return;
+    // Text mode is silent: there is no interviewer audio to arm.
+    const ok = session?.mode === "text" ? true : await armInterviewAudio();
+    if (!ok) {
+      // The room shows its own "enable audio" control if playback is still
+      // blocked; starting is still correct, the candidate is not stuck.
+      console.warn("Interview audio could not be armed on Begin.");
+    }
+    updateLifecycle("ACTIVE");
+  };
 
   async function loadSession() {
     updateLifecycle("LOADING");
@@ -133,27 +147,13 @@ export default function InterviewInteractionPage() {
       if (sessData.current_question) {
         setCurrentQuestion(sessData.current_question);
         if (sessData.current_question.question_text && (sessData.mode === "audio" || sessData.mode === "video")) {
-          // Pre-warm and pre-synthesize Kokoro TTS audio in background during countdown
-          const qText = sessData.current_question.question_text;
-          const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-          const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1";
-          fetch(`${baseUrl}/voice/tts`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(token ? { Authorization: `Bearer ${token}` } : {})
-            },
-            body: JSON.stringify({ text: qText })
-          }).then(async (res) => {
-            if (res.ok) {
-              const blob = await res.blob();
-              if (blob && blob.size > 0 && typeof window !== "undefined") {
-                const url = URL.createObjectURL(blob);
-                (window as any).__TTS_AUDIO_CACHE__ = (window as any).__TTS_AUDIO_CACHE__ || {};
-                (window as any).__TTS_AUDIO_CACHE__[qText] = url;
-              }
-            }
-          }).catch((e) => console.warn("Background TTS pre-warm:", e));
+          // Pre-synthesise question one during the countdown, through the same
+          // shared cache the room reads. It used to write to a cache of its own
+          // while the room kept another, so a pre-synthesis that had not
+          // finished by the time the room mounted was simply repeated -- two
+          // synthesis jobs for one line on the same CPU. One in-flight map now
+          // means the room awaits this request instead of starting a second.
+          void fetchInterviewerAudio(sessData.current_question.question_text);
         }
       }
 
@@ -358,9 +358,9 @@ export default function InterviewInteractionPage() {
       <WorkspaceLayout sectionTitle="Interview Workspace">
         <div style={{ maxWidth: "880px", margin: "0 auto" }}>
           <div className="saas-card" style={{ padding: "3rem", textAlign: "center" }}>
-            <AlertCircle size={36} color="#e11d48" style={{ marginBottom: "0.5rem" }} />
-            <h3 style={{ fontSize: "1.1rem", color: "#09090b" }}>Interview Session Not Found</h3>
-            <p style={{ color: "#71717a", fontSize: "0.85rem", marginBottom: "1.25rem" }}>
+            <AlertCircle size={36} color="var(--accent-rose)" style={{ marginBottom: "0.5rem" }} />
+            <h3 style={{ fontSize: "1.1rem", color: "var(--text-primary)" }}>Interview Session Not Found</h3>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "1.25rem" }}>
               {errorMessage || "Unable to find the requested interview session."}
             </p>
             <button onClick={() => router.push("/interview/configure")} className="btn btn-primary">
@@ -403,6 +403,10 @@ export default function InterviewInteractionPage() {
     <WorkspaceLayout
       sectionTitle={`Interview Session #${session.id}`}
       sectionSubtitle={`${session.role_title || `Role #${session.role_id}`} • ${session.interview_type || "Technical"} (${session.mode})`}
+      // A session that has started -- including a coding turn, which is part of
+      // the interview and not the standalone practice tool -- holds the
+      // sidebar. Navigating away mid-interview loses the turn in progress.
+      lockNavigation={lifecycle === "PRE_START" || lifecycle === "READY" || lifecycle === "ACTIVE"}
     >
       <div style={{ maxWidth: "880px", margin: "0 auto" }}>
         {/* Telemetry Status Bar with Prominent Countdown Timer across all modes */}
@@ -426,8 +430,14 @@ export default function InterviewInteractionPage() {
             <span className="badge badge-neutral" style={{ textTransform: "uppercase" }}>
               {session.mode} Mode
             </span>
+            {/* Before the interview starts this shows the session's configured
+                difficulty, never question one's -- nothing about the first
+                question is on screen until the candidate presses Begin. */}
             <span className="badge badge-warning" style={{ textTransform: "capitalize" }}>
-              Difficulty: {currentQuestion?.difficulty || session.state?.difficulty || "medium"}
+              Difficulty:{" "}
+              {lifecycle === "ACTIVE"
+                ? currentQuestion?.difficulty || session.state?.difficulty || "medium"
+                : session.state?.difficulty || "medium"}
             </span>
             {lifecycle === "ACTIVE" && stageLabel && (
               <span className="badge badge-primary" style={{ textTransform: "capitalize" }}>
@@ -469,11 +479,11 @@ export default function InterviewInteractionPage() {
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-                <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "#09090b" }}>
+                <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-primary)" }}>
                   Question {currentQuestionNumber}
                 </span>
                 {activeTopic && (
-                  <span style={{ fontSize: "0.78rem", color: "#71717a" }}>· {activeTopic}</span>
+                  <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>· {activeTopic}</span>
                 )}
               </div>
 
@@ -494,7 +504,7 @@ export default function InterviewInteractionPage() {
                 aria-label={`${answers.length} question${answers.length === 1 ? "" : "s"} completed, currently on question ${currentQuestionNumber}. The interview is adaptive, so the total is not fixed.`}
               >
                 {answers.length > 12 ? (
-                  <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "#4f46e5", marginRight: "0.2rem" }}>
+                  <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--accent-brand)", marginRight: "0.2rem" }}>
                     {answers.length} answered
                   </span>
                 ) : (
@@ -505,7 +515,7 @@ export default function InterviewInteractionPage() {
                         width: "16px",
                         height: "5px",
                         borderRadius: "9999px",
-                        backgroundColor: "#4f46e5",
+                        backgroundColor: "#6d5cff",
                         opacity: 0.55,
                         transition: "opacity 0.25s ease"
                       }}
@@ -517,7 +527,7 @@ export default function InterviewInteractionPage() {
                     width: "30px",
                     height: "5px",
                     borderRadius: "9999px",
-                    backgroundColor: "#4f46e5",
+                    backgroundColor: "#6d5cff",
                     boxShadow: "0 0 0 3px rgba(79, 70, 229, 0.12)"
                   }}
                 />
@@ -527,7 +537,7 @@ export default function InterviewInteractionPage() {
                     width: "22px",
                     height: "5px",
                     borderRadius: "9999px",
-                    background: "linear-gradient(90deg, #d4d4d8 0%, rgba(212, 212, 216, 0) 100%)"
+                    background: "linear-gradient(90deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0) 100%)"
                   }}
                 />
               </div>
@@ -540,7 +550,7 @@ export default function InterviewInteractionPage() {
             style={{
               padding: "0.65rem 1rem",
               backgroundColor: "var(--accent-rose-light)",
-              border: "1px solid #fecdd3",
+              border: "1px solid rgba(251, 113, 133, 0.32)",
               borderRadius: "8px",
               color: "var(--accent-rose)",
               fontSize: "0.85rem",
@@ -554,7 +564,9 @@ export default function InterviewInteractionPage() {
           </div>
         )}
 
-        {/* PREPARATION SCREEN: uniform 30s run-up before the first question */}
+        {/* PREPARATION SCREEN: uniform 30s run-up before the first question.
+            There is deliberately no control here -- the preparation window is
+            the same length for every candidate, so it cannot be skipped. */}
         {lifecycle === "PRE_START" && (
           <InterviewCountdown
             seconds={preStartSeconds}
@@ -565,6 +577,36 @@ export default function InterviewInteractionPage() {
           />
         )}
 
+        {/* READY SCREEN: the countdown has finished and the interview waits on
+            the candidate. This is the one and only start action, and the
+            interview starts on this click rather than on the timer, because the
+            click is what lets the browser play the interviewer's voice for the
+            first question. The question itself stays hidden until then. */}
+        {lifecycle === "READY" && (
+          <>
+            <InterviewCountdown
+              seconds={0}
+              totalSeconds={PRE_START_SECONDS}
+              mode={session.mode}
+              roleTitle={session.role_title}
+              companyName={session.company_name}
+              ready
+            />
+            <div style={{ textAlign: "center", marginTop: "1rem", marginBottom: "1.25rem" }}>
+              <button
+                onClick={handleBeginInterview}
+                className="btn btn-primary"
+                style={{ padding: "0.7rem 1.75rem", fontSize: "0.9rem" }}
+              >
+                Begin Interview
+              </button>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+                Your interviewer will ask the first question as soon as you begin.
+              </p>
+            </div>
+          </>
+        )}
+
         {/* DEDICATED CONCLUSION SCREEN: Rendered exclusively when CONCLUDING or REPORT_GENERATING */}
         {isConcludingOrGenerating ? (
           <div
@@ -572,8 +614,8 @@ export default function InterviewInteractionPage() {
             style={{
               padding: "3rem 2rem",
               textAlign: "center",
-              backgroundColor: "#ffffff",
-              border: "1px solid #e4e4e7",
+              backgroundColor: "var(--bg-surface)",
+              border: "1px solid var(--border-subtle)",
               boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
               display: "flex",
               flexDirection: "column",
@@ -597,13 +639,13 @@ export default function InterviewInteractionPage() {
             </div>
 
             <div>
-              <h3 style={{ fontSize: "1.35rem", fontWeight: 700, color: "#09090b", margin: "0 0 0.5rem" }}>
+              <h3 style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--text-primary)", margin: "0 0 0.5rem" }}>
                 Interview Concluded
               </h3>
               <p
                 style={{
                   fontSize: "1rem",
-                  color: "#3730a3",
+                  color: "var(--accent-brand-hover)",
                   maxWidth: "600px",
                   margin: "0 auto",
                   lineHeight: 1.5,
@@ -621,10 +663,10 @@ export default function InterviewInteractionPage() {
                 alignItems: "center",
                 gap: "0.5rem",
                 padding: "0.5rem 1rem",
-                backgroundColor: reportReady ? "var(--accent-emerald-light)" : "#f4f4f5",
+                backgroundColor: reportReady ? "var(--accent-emerald-light)" : "var(--bg-subtle)",
                 borderRadius: "8px",
                 fontSize: "0.85rem",
-                color: reportReady ? "#065f46" : "#52525b",
+                color: reportReady ? "var(--accent-emerald)" : "var(--text-secondary)",
                 fontWeight: 500
               }}
               role="status"
@@ -642,7 +684,7 @@ export default function InterviewInteractionPage() {
 
             {lifecycle === "REPORT_GENERATING" && (
               <>
-                <p style={{ fontSize: "0.85rem", color: "#71717a", maxWidth: "520px", margin: 0, lineHeight: 1.5 }}>
+                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", maxWidth: "520px", margin: 0, lineHeight: 1.5 }}>
                   {reportReady
                     ? "You can open it now, or find it any time under your interview history."
                     : "Usually ready within a few minutes. You can safely close this page \u2014 your report will be waiting under your interview history."}
@@ -743,8 +785,8 @@ export default function InterviewInteractionPage() {
                   padding: "0.6rem 1rem",
                   marginBottom: "0.85rem",
                   borderRadius: "10px",
-                  border: `1px solid ${submitting ? "#fde68a" : "#e0e7ff"}`,
-                  backgroundColor: submitting ? "#fffbeb" : "#f5f7ff",
+                  border: `1px solid ${submitting ? "rgba(251, 191, 36, 0.32)" : "rgba(139, 125, 255, 0.28)"}`,
+                  backgroundColor: submitting ? "var(--accent-amber-light)" : "var(--accent-brand-light)",
                   transition: "background-color 0.3s ease, border-color 0.3s ease"
                 }}
               >
@@ -755,7 +797,7 @@ export default function InterviewInteractionPage() {
                     height: "9px",
                     borderRadius: "50%",
                     flexShrink: 0,
-                    backgroundColor: submitting ? "#d97706" : "#4f46e5",
+                    backgroundColor: submitting ? "var(--accent-amber)" : "var(--accent-brand)",
                     ["--state-glow-color" as any]: "rgba(79, 70, 229, 0.4)"
                   }}
                 />
@@ -771,7 +813,7 @@ export default function InterviewInteractionPage() {
                       maxWidth: "160px",
                       height: "4px",
                       borderRadius: "9999px",
-                      color: "#d97706",
+                      color: "var(--accent-amber)",
                       marginLeft: "auto"
                     }}
                   />
@@ -786,17 +828,17 @@ export default function InterviewInteractionPage() {
                 style={{
                   padding: "1.5rem",
                   marginBottom: "1.25rem",
-                  borderColor: submitting ? "#e4e4e7" : "#dfe3ff",
+                  borderColor: submitting ? "var(--border-subtle)" : "rgba(139, 125, 255, 0.4)",
                   opacity: submitting ? 0.72 : 1,
                   transition: "opacity 0.3s ease, border-color 0.3s ease"
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem", flexWrap: "wrap", gap: "0.5rem" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
-                    <div style={{ backgroundColor: "#09090b", padding: "0.35rem", borderRadius: "6px", color: "#ffffff" }}>
+                    <div style={{ backgroundColor: "#6d5cff", padding: "0.35rem", borderRadius: "6px", color: "#ffffff" }}>
                       <Bot size={15} />
                     </div>
-                    <span style={{ fontSize: "0.825rem", fontWeight: 600, color: "#09090b" }}>
+                    <span style={{ fontSize: "0.825rem", fontWeight: 600, color: "var(--text-primary)" }}>
                       Interviewer Question #{currentQuestionNumber} ({currentQuestion.topic || "Technical"})
                     </span>
                   </div>
@@ -809,13 +851,13 @@ export default function InterviewInteractionPage() {
                   />
                 </div>
 
-                <p style={{ fontSize: "1.1rem", fontWeight: 500, color: "#09090b", lineHeight: 1.5, margin: "0 0 1rem" }}>
+                <p style={{ fontSize: "1.1rem", fontWeight: 500, color: "var(--text-primary)", lineHeight: 1.5, margin: "0 0 1rem" }}>
                   {currentQuestion.question_text}
                 </p>
 
                 {currentQuestion.expected_concepts && currentQuestion.expected_concepts.length > 0 && (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", alignItems: "center" }}>
-                    <span style={{ fontSize: "0.7rem", color: "#71717a", fontWeight: 600, textTransform: "uppercase" }}>Focus:</span>
+                    <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Focus:</span>
                     {currentQuestion.expected_concepts.map((fa: string) => (
                       <span key={fa} className="badge badge-neutral" style={{ fontSize: "0.72rem" }}>{fa}</span>
                     ))}
@@ -828,12 +870,7 @@ export default function InterviewInteractionPage() {
             {!isCodingTurn && session.mode === "text" && currentQuestion && (
               <div className="saas-card" style={{ padding: "1.5rem", marginBottom: "1.25rem" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
-                  <label style={{ fontSize: "0.825rem", fontWeight: 600, color: "#52525b" }}>Your Response</label>
-                  <AudioRecorder
-                    onTranscriptReceived={(transcript) => {
-                      setCandidateAnswer(transcript);
-                    }}
-                  />
+                  <label style={{ fontSize: "0.825rem", fontWeight: 600, color: "var(--text-secondary)" }}>Your Response</label>
                 </div>
 
                 <textarea
@@ -860,7 +897,7 @@ export default function InterviewInteractionPage() {
                 {/* Lightweight placeholder for the question still being chosen. */}
                 {submitting && (
                   <div style={{ marginTop: "1.1rem", paddingTop: "1rem", borderTop: "1px solid var(--border-subtle)" }}>
-                    <div style={{ fontSize: "0.76rem", color: "#71717a", fontWeight: 600, marginBottom: "0.55rem" }}>
+                    <div style={{ fontSize: "0.76rem", color: "var(--text-muted)", fontWeight: 600, marginBottom: "0.55rem" }}>
                       Preparing the next question
                     </div>
                     <div className="skeleton" style={{ height: "12px", width: "82%", marginBottom: "0.45rem" }} />
@@ -877,21 +914,21 @@ export default function InterviewInteractionPage() {
                   onClick={() => setShowTurnHistory(!showTurnHistory)}
                   style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
                 >
-                  <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", margin: 0 }}>
+                  <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>
                     Question & Response History ({answers.length})
                   </h3>
-                  {showTurnHistory ? <ChevronUp size={16} color="#71717a" /> : <ChevronDown size={16} color="#71717a" />}
+                  {showTurnHistory ? <ChevronUp size={16} color="var(--text-muted)" /> : <ChevronDown size={16} color="var(--text-muted)" />}
                 </div>
 
                 {showTurnHistory && (
                   <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem", marginTop: "1rem" }}>
                     {answers.map((a, idx) => (
-                      <div key={a.id || idx} style={{ padding: "0.85rem", backgroundColor: "#fafafa", borderRadius: "8px", border: "1px solid #f4f4f5", fontSize: "0.825rem" }}>
+                      <div key={a.id || idx} style={{ padding: "0.85rem", backgroundColor: "var(--bg-subtle)", borderRadius: "8px", border: "1px solid var(--border-subtle)", fontSize: "0.825rem" }}>
                         <div style={{ marginBottom: "0.35rem" }}>
-                          <strong style={{ color: "#09090b" }}>Q{idx + 1}: {a.question_text}</strong>
+                          <strong style={{ color: "var(--text-primary)" }}>Q{idx + 1}: {a.question_text}</strong>
                         </div>
-                        <p style={{ margin: "0.35rem 0 0", color: "#52525b" }}>
-                          <span style={{ fontWeight: 600, color: "#71717a" }}>Answer:</span> {a.candidate_answer_text}
+                        <p style={{ margin: "0.35rem 0 0", color: "var(--text-secondary)" }}>
+                          <span style={{ fontWeight: 600, color: "var(--text-muted)" }}>Answer:</span> {a.candidate_answer_text}
                         </p>
                       </div>
                     ))}

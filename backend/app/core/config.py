@@ -113,7 +113,17 @@ class Settings(BaseSettings):
     # over two minutes, which reads as a frozen screen. Every LLM caller on the
     # interview path has a deterministic fallback, so failing fast and degrading
     # is strictly better here than retrying into a stall.
-    LLM_REQUEST_TIMEOUT_SECONDS: float = 25.0
+    #
+    # The budget must still clear the model's normal answer time, or it discards
+    # work that was about to succeed. Measured against gemini-3.5-flash-lite on a
+    # real turn-evaluation prompt, five consecutive calls took 13.6, 14.7, 13.8,
+    # 17.8 and 18.9 seconds -- so a 25s budget sat inside the ordinary spread,
+    # and turns were timing out and being scored by the deterministic rubric even
+    # though the provider was healthy. 45s is roughly 2.4x the slowest observed
+    # call: comfortably past normal variance, while still bounding the wait.
+    LLM_REQUEST_TIMEOUT_SECONDS: float = 45.0
+    # Retries for transient faults (429, 5xx, dropped connections). Timeouts are
+    # deliberately excluded from this budget -- see app/ai/resilience.py.
     LLM_MAX_RETRIES: int = 1
     LLM_RETRY_BACKOFF_FACTOR: float = 0.5
     LLM_MAX_INPUT_TOKENS: int = 8000

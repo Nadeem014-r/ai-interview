@@ -1,6 +1,28 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_serializer
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utc_iso(value: Optional[datetime]) -> Optional[str]:
+    """Serialise a stored timestamp as an explicitly UTC ISO-8601 string.
+
+    Every timestamp column in this application is written with
+    ``datetime.utcnow()``, so the values are UTC but carry no tzinfo. Pydantic
+    renders a naive datetime without an offset ("2026-09-11T05:02:55"), and
+    ``new Date()`` in the browser reads a bare local-time string as *local*
+    time -- so a session finished a minute ago was read as finished several
+    hours in the future wherever the user is not on UTC, and the dashboard's
+    "ago" arithmetic came out wrong.
+
+    This does not pick a display timezone: it states the one the value is
+    already stored in and lets the client convert.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
 
 class RoleOut(BaseModel):
     id: int
@@ -73,6 +95,10 @@ class AnswerItemOut(BaseModel):
     created_at: datetime
     evaluation: Optional[Dict[str, Any]] = None
 
+    @field_serializer("created_at")
+    def _ser_created_at(self, value: datetime) -> Optional[str]:
+        return _utc_iso(value)
+
 class InterviewOut(BaseModel):
     id: int
     candidate_id: int
@@ -91,6 +117,10 @@ class InterviewOut(BaseModel):
     state: Optional[InterviewStateOut] = None
     current_question: Optional[QuestionOut] = None
     answers: List[AnswerItemOut] = []
+
+    @field_serializer("start_time", "end_time", "created_at")
+    def _ser_timestamps(self, value: Optional[datetime]) -> Optional[str]:
+        return _utc_iso(value)
 
     class Config:
         from_attributes = True
@@ -147,6 +177,10 @@ class ReportOut(BaseModel):
     recommendations: List[str]
     executive_summary: Optional[str]
     created_at: datetime
+
+    @field_serializer("created_at")
+    def _ser_created_at(self, value: datetime) -> Optional[str]:
+        return _utc_iso(value)
 
     class Config:
         from_attributes = True

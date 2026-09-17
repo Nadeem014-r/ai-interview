@@ -173,10 +173,10 @@ export default function ResumeIntelligencePage() {
       {/* Header Actions */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem", flexWrap: "wrap", gap: "1rem" }}>
         <div>
-          <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "#09090b", letterSpacing: "-0.02em", margin: 0 }}>
+          <h2 style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em", margin: 0 }}>
             Resume Intelligence Workspace
           </h2>
-          <span style={{ fontSize: "0.8rem", color: "#71717a" }}>
+          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
             Extracted facts powering personalized questions and role matches
           </span>
         </div>
@@ -192,13 +192,13 @@ export default function ResumeIntelligencePage() {
       </div>
 
       {errorMessage && (
-        <div style={{ padding: "0.65rem 1rem", backgroundColor: "var(--accent-rose-light)", border: "1px solid #fecdd3", borderRadius: "8px", color: "var(--accent-rose)", fontSize: "0.85rem", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.45rem" }}>
+        <div style={{ padding: "0.65rem 1rem", backgroundColor: "var(--accent-rose-light)", border: "1px solid rgba(251, 113, 133, 0.32)", borderRadius: "8px", color: "var(--accent-rose)", fontSize: "0.85rem", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.45rem" }}>
           <AlertCircle size={15} /> {errorMessage}
         </div>
       )}
 
       {savedSuccess && (
-        <div style={{ padding: "0.65rem 1rem", backgroundColor: "var(--accent-emerald-light)", border: "1px solid #a7f3d0", borderRadius: "8px", color: "var(--accent-emerald)", fontSize: "0.85rem", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.45rem" }}>
+        <div style={{ padding: "0.65rem 1rem", backgroundColor: "var(--accent-emerald-light)", border: "1px solid rgba(52, 211, 153, 0.32)", borderRadius: "8px", color: "var(--accent-emerald)", fontSize: "0.85rem", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.45rem" }}>
           <CheckCircle2 size={15} /> Extracted resume data updated and saved successfully!
         </div>
       )}
@@ -206,7 +206,7 @@ export default function ResumeIntelligencePage() {
       {/* Processing Indicator */}
       {uploadStatus !== "IDLE" && (
         <div className="saas-card" style={{ padding: "1rem 1.25rem", marginBottom: "1.5rem" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", marginBottom: "0.45rem", color: "#09090b", fontSize: "0.85rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", marginBottom: "0.45rem", color: "var(--text-primary)", fontSize: "0.85rem" }}>
             <RefreshCw size={14} className="spin" />
             <span style={{ fontWeight: 500 }}>{statusMessage}</span>
           </div>
@@ -237,9 +237,9 @@ export default function ResumeIntelligencePage() {
       ) : !currentResume ? (
         /* Empty State */
         <div className="saas-card" style={{ padding: "3rem 1.5rem", textAlign: "center" }}>
-          <FileText size={36} color="#a1a1aa" style={{ marginBottom: "0.6rem" }} />
-          <h3 style={{ fontSize: "1.15rem", fontWeight: 600, color: "#09090b", marginBottom: "0.3rem" }}>No Resume Uploaded</h3>
-          <p style={{ color: "#71717a", maxWidth: "440px", margin: "0 auto 1.25rem", fontSize: "0.875rem" }}>
+          <FileText size={36} color="var(--text-tertiary)" style={{ marginBottom: "0.6rem" }} />
+          <h3 style={{ fontSize: "1.15rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.3rem" }}>No Resume Uploaded</h3>
+          <p style={{ color: "var(--text-muted)", maxWidth: "440px", margin: "0 auto 1.25rem", fontSize: "0.875rem" }}>
             Upload your resume (PDF, DOCX, TXT) to extract verified skills, education history, and matching job roles.
           </p>
           <button onClick={() => fileInputRef.current?.click()} className="btn btn-primary">
@@ -252,13 +252,13 @@ export default function ResumeIntelligencePage() {
           <div className="saas-card" style={{ padding: "1.25rem 1.5rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "0.85rem" }}>
               <div>
-                <span style={{ fontSize: "0.7rem", color: "#71717a", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>
+                <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>
                   Resume Profile Overview
                 </span>
-                <h3 style={{ fontSize: "1.15rem", fontWeight: 600, color: "#09090b", margin: "0.15rem 0" }}>
+                <h3 style={{ fontSize: "1.15rem", fontWeight: 600, color: "var(--text-primary)", margin: "0.15rem 0" }}>
                   {candidateName ? `${candidateName} (${currentResume.filename})` : currentResume.filename}
                 </h3>
-                <div style={{ display: "flex", gap: "0.85rem", color: "#71717a", fontSize: "0.8rem", marginTop: "0.35rem", flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ display: "flex", gap: "0.85rem", color: "var(--text-muted)", fontSize: "0.8rem", marginTop: "0.35rem", flexWrap: "wrap", alignItems: "center" }}>
                   {candidateDomain && (
                     <span className="badge badge-neutral" style={{ fontWeight: 600 }}>
                       {candidateDomain}
@@ -284,7 +284,7 @@ export default function ResumeIntelligencePage() {
           {/* Section 2: Skills with Edit Mode */}
           <div className="saas-card" style={{ padding: "1.25rem 1.5rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
-              <h3 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600, color: "#09090b", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+              <h3 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
                 <Code2 size={16} /> Extracted Technologies & Skills ({profile?.skills?.length || 0})
               </h3>
               <button onClick={() => setIsEditing(!isEditing)} className="btn btn-secondary" style={{ padding: "0.25rem 0.6rem", fontSize: "0.75rem" }}>
@@ -294,7 +294,7 @@ export default function ResumeIntelligencePage() {
 
             {isEditing ? (
               <div>
-                <label style={{ display: "block", fontSize: "0.78rem", color: "#71717a", marginBottom: "0.3rem" }}>
+                <label style={{ display: "block", fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.3rem" }}>
                   Edit Skills (comma-separated):
                 </label>
                 <input
@@ -311,7 +311,7 @@ export default function ResumeIntelligencePage() {
             ) : (
               <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
                 {(!profile?.skills || profile.skills.length === 0) ? (
-                  <span style={{ color: "#a1a1aa", fontSize: "0.825rem" }}>No skills detected in resume.</span>
+                  <span style={{ color: "var(--text-tertiary)", fontSize: "0.825rem" }}>No skills detected in resume.</span>
                 ) : (
                   profile.skills.map((s: string) => (
                     <span key={s} className="badge badge-neutral" style={{ fontSize: "0.75rem" }}>
@@ -327,16 +327,16 @@ export default function ResumeIntelligencePage() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1rem" }}>
             {/* Education */}
             <div className="saas-card" style={{ padding: "1.25rem 1.5rem" }}>
-              <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "0.75rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+              <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.75rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
                 <GraduationCap size={16} /> Education ({educationList.length})
               </h3>
               {educationList.length === 0 ? (
-                <p style={{ color: "#a1a1aa", fontSize: "0.825rem", margin: 0 }}>Not available in resume</p>
+                <p style={{ color: "var(--text-tertiary)", fontSize: "0.825rem", margin: 0 }}>Not available in resume</p>
               ) : (
                 educationList.map((edu: any, idx: number) => (
-                  <div key={idx} style={{ padding: "0.6rem 0.75rem", backgroundColor: "#fafafa", border: "1px solid #f4f4f5", borderRadius: "8px", marginBottom: "0.45rem", fontSize: "0.825rem" }}>
-                    <strong style={{ color: "#09090b" }}>{edu.degree || "Degree"}</strong>
-                    <div style={{ color: "#71717a", fontSize: "0.78rem", marginTop: "0.1rem" }}>
+                  <div key={idx} style={{ padding: "0.6rem 0.75rem", backgroundColor: "var(--bg-subtle)", border: "1px solid var(--border-subtle)", borderRadius: "8px", marginBottom: "0.45rem", fontSize: "0.825rem" }}>
+                    <strong style={{ color: "var(--text-primary)" }}>{edu.degree || "Degree"}</strong>
+                    <div style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginTop: "0.1rem" }}>
                       {edu.institution || "Institution"} {edu.year ? `• ${edu.year}` : ""}
                     </div>
                   </div>
@@ -346,11 +346,11 @@ export default function ResumeIntelligencePage() {
 
             {/* Extracted Projects & Experience */}
             <div className="saas-card" style={{ padding: "1.25rem 1.5rem" }}>
-              <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "0.75rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+              <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.75rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
                 <FolderGit2 size={16} /> Extracted Projects & Experience ({projectsList.length + experienceList.length})
               </h3>
               {projectsList.length === 0 && experienceList.length === 0 ? (
-                <p style={{ color: "#a1a1aa", fontSize: "0.825rem", margin: 0 }}>
+                <p style={{ color: "var(--text-tertiary)", fontSize: "0.825rem", margin: 0 }}>
                   No profile information or projects were identified in this resume.
                 </p>
               ) : (
@@ -364,18 +364,18 @@ export default function ResumeIntelligencePage() {
                     const evidenceSummary = proj.evidence_summary || (proj.description && proj.description !== projectTitle ? proj.description : null);
 
                     return (
-                      <div key={`proj-${idx}`} style={{ padding: "0.65rem 0.85rem", backgroundColor: "#fafafa", border: "1px solid #f4f4f5", borderRadius: "8px", marginBottom: "0.5rem", fontSize: "0.825rem" }}>
+                      <div key={`proj-${idx}`} style={{ padding: "0.65rem 0.85rem", backgroundColor: "var(--bg-subtle)", border: "1px solid var(--border-subtle)", borderRadius: "8px", marginBottom: "0.5rem", fontSize: "0.825rem" }}>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
-                          <strong style={{ color: "#09090b" }}>{projectTitle}</strong>
+                          <strong style={{ color: "var(--text-primary)" }}>{projectTitle}</strong>
                           <span className="badge badge-neutral" style={{ fontSize: "0.68rem" }}>Project</span>
                         </div>
                         {technologies && (
-                          <div style={{ color: "#6366f1", fontSize: "0.76rem", fontWeight: 500, marginTop: "0.2rem" }}>
+                          <div style={{ color: "var(--accent-brand)", fontSize: "0.76rem", fontWeight: 500, marginTop: "0.2rem" }}>
                             {technologies}
                           </div>
                         )}
                         {evidenceSummary && (
-                          <div style={{ color: "#52525b", fontSize: "0.75rem", marginTop: "0.2rem", lineHeight: 1.35 }}>
+                          <div style={{ color: "var(--text-secondary)", fontSize: "0.75rem", marginTop: "0.2rem", lineHeight: 1.35 }}>
                             {evidenceSummary}
                           </div>
                         )}
@@ -383,13 +383,13 @@ export default function ResumeIntelligencePage() {
                     );
                   })}
                   {experienceList.map((exp: any, idx: number) => (
-                    <div key={`exp-${idx}`} style={{ padding: "0.65rem 0.85rem", backgroundColor: "#fafafa", border: "1px solid #f4f4f5", borderRadius: "8px", marginBottom: "0.5rem", fontSize: "0.825rem" }}>
+                    <div key={`exp-${idx}`} style={{ padding: "0.65rem 0.85rem", backgroundColor: "var(--bg-subtle)", border: "1px solid var(--border-subtle)", borderRadius: "8px", marginBottom: "0.5rem", fontSize: "0.825rem" }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
-                        <strong style={{ color: "#09090b" }}>{exp.role || "Role"}</strong>
+                        <strong style={{ color: "var(--text-primary)" }}>{exp.role || "Role"}</strong>
                         <span className="badge badge-neutral" style={{ fontSize: "0.68rem" }}>Experience</span>
                       </div>
                       {exp.company && (
-                        <div style={{ color: "#71717a", fontSize: "0.78rem", marginTop: "0.15rem" }}>
+                        <div style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginTop: "0.15rem" }}>
                           {exp.company} {exp.duration ? `• ${exp.duration}` : ""}
                         </div>
                       )}
@@ -403,18 +403,18 @@ export default function ResumeIntelligencePage() {
           {/* Section 4: Recommended Roles */}
           {matches.length > 0 && (
             <div className="saas-card" style={{ padding: "1.25rem 1.5rem" }}>
-              <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#09090b", marginBottom: "0.75rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+              <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.75rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
                 <Sparkles size={16} /> Recommended Role Alignments
               </h3>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "0.85rem" }}>
                 {matches.slice(0, 3).map((m) => (
-                  <div key={m.role_id} style={{ padding: "0.85rem", backgroundColor: "#fafafa", border: "1px solid #f4f4f5", borderRadius: "8px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                  <div key={m.role_id} style={{ padding: "0.85rem", backgroundColor: "var(--bg-subtle)", border: "1px solid var(--border-subtle)", borderRadius: "8px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
                     <div>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
-                        <h4 style={{ margin: 0, fontSize: "0.9rem", fontWeight: 600, color: "#09090b" }}>{m.role_title}</h4>
+                        <h4 style={{ margin: 0, fontSize: "0.9rem", fontWeight: 600, color: "var(--text-primary)" }}>{m.role_title}</h4>
                         <span className="badge badge-success">{m.overall_score}%</span>
                       </div>
-                      <span style={{ fontSize: "0.78rem", color: "#71717a" }}>{m.company_name}</span>
+                      <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{m.company_name}</span>
                     </div>
                     <Link href={`/interview/configure?company_id=${m.company_id}&role_id=${m.role_id}`} className="btn btn-secondary" style={{ marginTop: "0.75rem", padding: "0.35rem", fontSize: "0.78rem", justifyContent: "center" }}>
                       <span>Practice Role</span>
@@ -452,26 +452,26 @@ export default function ResumeIntelligencePage() {
               maxWidth: "440px",
               width: "100%",
               padding: "1.75rem",
-              backgroundColor: "#ffffff",
+              backgroundColor: "var(--bg-surface)",
               borderRadius: "14px",
               boxShadow: "var(--shadow-modal)",
               position: "relative",
-              border: "1px solid #e4e4e7"
+              border: "1px solid var(--border-subtle)"
             }}
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.85rem" }}>
-              <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 600, color: "#09090b" }}>Replace current resume?</h3>
+              <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)" }}>Replace current resume?</h3>
               <button
                 onClick={() => setShowReplaceModal(false)}
-                style={{ background: "transparent", border: "none", color: "#71717a", cursor: "pointer", padding: "0.2rem" }}
+                style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: "0.2rem" }}
                 aria-label="Close"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <p style={{ color: "#71717a", fontSize: "0.875rem", marginBottom: "1.5rem", lineHeight: 1.5 }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.875rem", marginBottom: "1.5rem", lineHeight: 1.5 }}>
               Your new resume will be parsed to update your extracted skills and calculate new role compatibility recommendations.
             </p>
 

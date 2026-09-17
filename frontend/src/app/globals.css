@@ -1,63 +1,74 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Outfit:wght@500;600;700;800&display=swap');
 
 :root {
-  /* Ultra-Clean Modern SaaS Palette (ChatGPT / Linear / Vercel Aesthetic) */
-  --bg-page: #fafafa;
-  --bg-surface: #ffffff;
-  --bg-subtle: #f4f4f5;
-  --bg-muted: #e4e4e7;
-  --bg-glass: rgba(255, 255, 255, 0.85);
+  /* ============================================================
+     Premium Dark AI Workspace Palette
+     Deep navy base, electric indigo / violet accents, glass
+     surfaces. Token names are unchanged from the previous light
+     theme so every existing var() consumer keeps working.
+     ============================================================ */
+  --bg-page: #06070f;
+  --bg-deep: #04050b;
+  --bg-surface: rgba(20, 23, 45, 0.72);
+  --bg-surface-solid: #12142a;
+  --bg-subtle: rgba(255, 255, 255, 0.045);
+  --bg-muted: rgba(255, 255, 255, 0.08);
+  --bg-glass: rgba(255, 255, 255, 0.05);
 
-  /* Primary Accent: Restrained Modern Slate/Black & 10% Indigo Accent */
-  --primary: #09090b;
-  --primary-hover: #27272a;
-  --primary-light: #f4f4f5;
-  --primary-glow: rgba(9, 9, 11, 0.08);
+  /* Primary action: electric indigo -> violet, not flat black */
+  --primary: #6d5cff;
+  --primary-hover: #8272ff;
+  --primary-light: rgba(109, 92, 255, 0.14);
+  --primary-glow: rgba(109, 92, 255, 0.45);
+  --primary-gradient: linear-gradient(135deg, #6d5cff 0%, #7c5cff 45%, #a855f7 100%);
 
-  --accent-brand: #4f46e5;
-  --accent-brand-hover: #4338ca;
-  --accent-brand-light: #eef2ff;
-  --accent-brand-glow: rgba(79, 70, 229, 0.15);
+  --accent-brand: #8b7dff;
+  --accent-brand-hover: #a79bff;
+  --accent-brand-light: rgba(124, 92, 255, 0.16);
+  --accent-brand-glow: rgba(124, 92, 255, 0.42);
 
-  /* Semantic Highlights */
-  --accent-cyan: #0284c7;
-  --accent-cyan-light: #f0f9ff;
-  --accent-emerald: #059669;
-  --accent-emerald-light: #ecfdf5;
-  --accent-amber: #d97706;
-  --accent-amber-light: #fffbeb;
-  --accent-rose: #e11d48;
-  --accent-rose-light: #fff1f2;
+  /* Semantic highlights, tuned for a dark ground */
+  --accent-cyan: #38bdf8;
+  --accent-cyan-light: rgba(56, 189, 248, 0.14);
+  --accent-emerald: #34d399;
+  --accent-emerald-light: rgba(52, 211, 153, 0.14);
+  --accent-amber: #fbbf24;
+  --accent-amber-light: rgba(251, 191, 36, 0.14);
+  --accent-rose: #fb7185;
+  --accent-rose-light: rgba(251, 113, 133, 0.14);
 
   /* Typography */
-  --text-primary: #09090b;
-  --text-secondary: #52525b;
-  --text-muted: #71717a;
-  --text-tertiary: #a1a1aa;
+  --text-primary: #edeffc;
+  --text-secondary: #b4b9d8;
+  --text-muted: #8b90b4;
+  --text-tertiary: #6b7095;
 
-  /* Borders */
-  --border-subtle: #e4e4e7;
-  --border-default: #d4d4d8;
-  --border-strong: #a1a1aa;
-  --border-focus: #09090b;
+  /* Borders / hairlines */
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-default: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.22);
+  --border-focus: rgba(139, 125, 255, 0.75);
 
   /* Radii */
-  --radius-xs: 4px;
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 14px;
-  --radius-xl: 18px;
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
   --radius-full: 9999px;
 
-  /* Subtle, Natural Shadows */
-  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
-  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.02);
-  --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.03), 0 1px 2px -1px rgba(0, 0, 0, 0.02);
-  --shadow-card-hover: 0 4px 14px -2px rgba(0, 0, 0, 0.06), 0 2px 6px -2px rgba(0, 0, 0, 0.03);
-  --shadow-modal: 0 20px 30px -10px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+  /* Depth: a dark UI needs real shadow plus a light hairline to read */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 12px 32px -12px rgba(0, 0, 0, 0.75);
+  --shadow-card-hover: 0 1px 0 rgba(255, 255, 255, 0.09) inset,
+                       0 22px 48px -16px rgba(0, 0, 0, 0.85),
+                       0 0 0 1px rgba(139, 125, 255, 0.18);
+  --shadow-modal: 0 40px 90px -20px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.07);
+  --shadow-glow: 0 0 34px -6px var(--primary-glow);
 
   --transition-fast: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-normal: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 * {
@@ -66,27 +77,81 @@
   padding: 0;
 }
 
+html {
+  background-color: var(--bg-page);
+  color-scheme: dark;
+}
+
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background-color: var(--bg-page);
   color: var(--text-primary);
   min-height: 100vh;
   overflow-x: hidden;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* Atmospheric ground: accent glows, a faint star-dust layer and a hairline
+     grid, all painted as background layers so nothing is added to the DOM and
+     no new stacking context is introduced. */
+  background-color: var(--bg-page);
+  background-image:
+    radial-gradient(900px 620px at 12% -8%, rgba(109, 92, 255, 0.22), transparent 62%),
+    radial-gradient(820px 560px at 88% 2%, rgba(168, 85, 247, 0.16), transparent 60%),
+    radial-gradient(1100px 700px at 50% 108%, rgba(56, 189, 248, 0.10), transparent 66%),
+    radial-gradient(1.4px 1.4px at 18% 24%, rgba(255, 255, 255, 0.32), transparent 100%),
+    radial-gradient(1.2px 1.2px at 72% 16%, rgba(255, 255, 255, 0.26), transparent 100%),
+    radial-gradient(1.2px 1.2px at 42% 62%, rgba(255, 255, 255, 0.20), transparent 100%),
+    radial-gradient(1.6px 1.6px at 87% 71%, rgba(255, 255, 255, 0.22), transparent 100%),
+    radial-gradient(1.2px 1.2px at 8% 82%, rgba(255, 255, 255, 0.18), transparent 100%),
+    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(180deg, #080a16 0%, #06070f 45%, #04050b 100%);
+  background-size:
+    auto, auto, auto,
+    auto, auto, auto, auto, auto,
+    64px 64px, 64px 64px,
+    auto;
+  background-repeat:
+    no-repeat, no-repeat, no-repeat,
+    no-repeat, no-repeat, no-repeat, no-repeat, no-repeat,
+    repeat, repeat, no-repeat;
+  background-attachment: fixed;
 }
 
 h1, h2, h3, h4, h5, h6 {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--text-primary);
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-weight: 650;
+  letter-spacing: -0.025em;
 }
 
-/* Strategic SaaS Card */
+::selection {
+  background: rgba(124, 92, 255, 0.35);
+  color: #ffffff;
+}
+
+/* Quiet, dark scrollbars so panes never cut the atmosphere with light gutters */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.11);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 125, 255, 0.45);
+  background-clip: content-box;
+}
+
+/* ============================================================
+   Glass surfaces
+   ============================================================ */
 .glass-card, .saas-card {
   background: var(--bg-surface);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
@@ -98,7 +163,41 @@ h1, h2, h3, h4, h5, h6 {
   box-shadow: var(--shadow-card-hover);
 }
 
-/* Standardized Buttons */
+/* Opt-in stronger panel for hero / feature surfaces. */
+.premium-card {
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 42%, rgba(255, 255, 255, 0.01) 100%),
+    rgba(14, 16, 34, 0.82);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 24px 60px -22px rgba(0, 0, 0, 0.9);
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.28s ease;
+}
+
+.premium-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(139, 125, 255, 0.34);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset,
+              0 34px 76px -24px rgba(0, 0, 0, 0.95),
+              0 0 44px -14px rgba(124, 92, 255, 0.5);
+}
+
+/* Gradient wordmark / emphasis text. */
+.gradient-text {
+  background: linear-gradient(115deg, #a5b4fc 0%, #8b7dff 38%, #c084fc 72%, #7dd3fc 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* ============================================================
+   Buttons
+   ============================================================ */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -106,7 +205,7 @@ h1, h2, h3, h4, h5, h6 {
   gap: 0.45rem;
   padding: 0.55rem 1.1rem;
   font-family: inherit;
-  font-weight: 500;
+  font-weight: 600;
   font-size: 0.875rem;
   line-height: 1.25rem;
   border-radius: var(--radius-sm);
@@ -118,17 +217,22 @@ h1, h2, h3, h4, h5, h6 {
   user-select: none;
 }
 
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .btn-primary {
-  background: #09090b;
+  background: var(--primary-gradient);
   color: #ffffff;
-  border-color: #09090b;
-  box-shadow: var(--shadow-xs);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 8px 24px -10px var(--primary-glow);
 }
 
 .btn-primary:hover {
-  background: #27272a;
-  border-color: #27272a;
+  filter: brightness(1.1);
   transform: translateY(-1px);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.28) inset, 0 14px 32px -10px var(--primary-glow);
 }
 
 .btn-primary:active {
@@ -136,47 +240,50 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .btn-accent {
-  background: var(--accent-brand);
+  background: linear-gradient(135deg, #7c5cff 0%, #a855f7 100%);
   color: #ffffff;
-  border-color: var(--accent-brand);
-  box-shadow: var(--shadow-xs);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 8px 24px -10px var(--accent-brand-glow);
 }
 
 .btn-accent:hover {
-  background: var(--accent-brand-hover);
-  border-color: var(--accent-brand-hover);
-  box-shadow: 0 4px 12px var(--accent-brand-glow);
+  filter: brightness(1.1);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.26) inset, 0 14px 32px -10px var(--accent-brand-glow);
 }
 
 .btn-secondary {
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   color: var(--text-primary);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-default);
   box-shadow: var(--shadow-xs);
 }
 
 .btn-secondary:hover {
-  background: var(--bg-subtle);
-  border-color: var(--border-default);
-  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.11);
+  border-color: var(--border-strong);
+  color: #ffffff;
 }
 
 .btn-outline-danger {
-  background: transparent;
+  background: rgba(251, 113, 133, 0.08);
   color: var(--accent-rose);
-  border: 1px solid #fecdd3;
+  border: 1px solid rgba(251, 113, 133, 0.32);
 }
 
 .btn-outline-danger:hover {
-  background: var(--accent-rose-light);
-  border-color: #fda4af;
+  background: rgba(251, 113, 133, 0.18);
+  border-color: rgba(251, 113, 133, 0.55);
 }
 
-/* Form Controls */
+/* ============================================================
+   Form controls
+   ============================================================ */
 .form-input {
   width: 100%;
-  padding: 0.625rem 0.875rem;
-  background: #ffffff;
+  padding: 0.65rem 0.9rem;
+  background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
@@ -192,76 +299,95 @@ h1, h2, h3, h4, h5, h6 {
 
 .form-input:focus {
   outline: none;
+  background: rgba(255, 255, 255, 0.06);
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px rgba(9, 9, 11, 0.05);
+  box-shadow: 0 0 0 3px rgba(124, 92, 255, 0.18);
 }
 
-/* Badges / Chips */
+/* Native dropdown lists render on the OS surface, so they need an explicit
+   dark ground of their own. */
+select.form-input option,
+select option {
+  background: #12142a;
+  color: #edeffc;
+}
+
+/* ============================================================
+   Badges / chips
+   ============================================================ */
 .badge {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  padding: 0.2rem 0.55rem;
-  border-radius: var(--radius-sm);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-xs);
   font-size: 0.75rem;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1rem;
   letter-spacing: 0.01em;
 }
 
 .badge-neutral {
-  background: var(--bg-subtle);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--text-secondary);
   border: 1px solid var(--border-subtle);
 }
 
-.badge-primary { 
-  background: var(--accent-brand-light); 
-  color: var(--accent-brand); 
-  border: 1px solid #c7d2fe; 
+.badge-primary {
+  background: var(--accent-brand-light);
+  color: var(--accent-brand-hover);
+  border: 1px solid rgba(139, 125, 255, 0.32);
 }
 
-.badge-success { 
-  background: var(--accent-emerald-light); 
-  color: var(--accent-emerald); 
-  border: 1px solid #a7f3d0; 
+.badge-success {
+  background: var(--accent-emerald-light);
+  color: var(--accent-emerald);
+  border: 1px solid rgba(52, 211, 153, 0.32);
 }
 
-.badge-warning { 
-  background: var(--accent-amber-light); 
-  color: var(--accent-amber); 
-  border: 1px solid #fde68a; 
+.badge-warning {
+  background: var(--accent-amber-light);
+  color: var(--accent-amber);
+  border: 1px solid rgba(251, 191, 36, 0.32);
 }
 
-.badge-danger { 
-  background: var(--accent-rose-light); 
-  color: var(--accent-rose); 
-  border: 1px solid #fecdd3; 
+.badge-danger {
+  background: var(--accent-rose-light);
+  color: var(--accent-rose);
+  border: 1px solid rgba(251, 113, 133, 0.32);
 }
 
-/* Progress Bars */
+/* ============================================================
+   Progress
+   ============================================================ */
 .progress-bar {
   width: 100%;
-  height: 5px;
-  background: #e4e4e7;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-full);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background: #09090b;
+  background: var(--primary-gradient);
+  box-shadow: 0 0 12px -2px var(--primary-glow);
   transition: width 0.3s ease-out;
 }
 
-/* Animations & Skeletons */
+/* ============================================================
+   Animations & skeletons
+   ============================================================ */
 @keyframes shimmer {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
 }
 
 .skeleton {
-  background: linear-gradient(90deg, #f4f4f5 25%, #e4e4e7 50%, #f4f4f5 75%);
+  background: linear-gradient(90deg,
+    rgba(255, 255, 255, 0.04) 25%,
+    rgba(255, 255, 255, 0.10) 50%,
+    rgba(255, 255, 255, 0.04) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite ease-in-out;
   border-radius: var(--radius-sm);
@@ -286,8 +412,32 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .dropzone-active {
-  border-color: #09090b !important;
-  background: #f4f4f5 !important;
+  border-color: rgba(139, 125, 255, 0.7) !important;
+  background: rgba(124, 92, 255, 0.12) !important;
+}
+
+/* Slow drifting accent orbs for hero / workspace atmosphere. */
+@keyframes orbDrift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(2.5%, -3.5%, 0) scale(1.08); }
+}
+
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  filter: blur(70px);
+  animation: orbDrift 16s ease-in-out infinite;
+}
+
+/* Soft radial spotlight behind a hero subject. */
+.aurora-veil {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(620px 300px at 50% 0%, rgba(124, 92, 255, 0.28), transparent 70%),
+    radial-gradient(520px 260px at 82% 18%, rgba(56, 189, 248, 0.16), transparent 72%);
 }
 
 /* Phase 6: Production-Grade AI Interviewer Video Stage Animations */
@@ -390,8 +540,19 @@ h1, h2, h3, h4, h5, h6 {
 
 .hover-elevate:hover {
   transform: translateY(-3px);
-  border-color: #e0e7ff !important;
-  box-shadow: 0 12px 28px -8px rgba(79, 70, 229, 0.16), 0 4px 10px -4px rgba(0, 0, 0, 0.04) !important;
+  border-color: rgba(139, 125, 255, 0.32) !important;
+  box-shadow: 0 22px 48px -18px rgba(0, 0, 0, 0.9),
+              0 0 36px -12px rgba(124, 92, 255, 0.45) !important;
+}
+
+/* Subtle lift for primary CTAs. */
+.hover-lift {
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 34px -12px var(--primary-glow);
 }
 
 /* Calm breathing ring used during interview preparation. */
@@ -436,7 +597,7 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Live state indicators inside the interview rooms. */
 @keyframes stateGlow {
-  0%, 100% { box-shadow: 0 0 0 0 var(--state-glow-color, rgba(99, 102, 241, 0.45)); }
+  0%, 100% { box-shadow: 0 0 0 0 var(--state-glow-color, rgba(139, 125, 255, 0.5)); }
   70% { box-shadow: 0 0 0 8px rgba(0, 0, 0, 0); }
 }
 
@@ -488,6 +649,7 @@ h1, h2, h3, h4, h5, h6 {
   .wave-bar,
   .animate-spin,
   .spin,
+  .orb,
   .avatar-breathing,
   .avatar-speaking,
   .avatar-thinking,
@@ -498,7 +660,9 @@ h1, h2, h3, h4, h5, h6 {
 
   .rise-in { opacity: 1; }
 
-  .hover-elevate:hover {
+  .hover-elevate:hover,
+  .hover-lift:hover,
+  .premium-card:hover {
     transform: none;
   }
 }

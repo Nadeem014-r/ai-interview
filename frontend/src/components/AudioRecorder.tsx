@@ -82,7 +82,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onTranscriptReceiv
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
       {!isRecording ? (
-        <button onClick={startRecording} className="btn btn-secondary" style={{ backgroundColor: "var(--accent-emerald-light)", color: "var(--accent-emerald)", borderColor: "#a7f3d0", fontSize: "0.825rem" }}>
+        <button onClick={startRecording} className="btn btn-secondary" style={{ backgroundColor: "var(--accent-emerald-light)", color: "var(--accent-emerald)", borderColor: "rgba(52, 211, 153, 0.32)", fontSize: "0.825rem" }}>
           <Mic size={15} /> <span>Start Speaking</span>
         </button>
       ) : (
@@ -92,7 +92,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onTranscriptReceiv
       )}
 
       {isTranscribing && (
-        <span style={{ fontSize: "0.8rem", color: "#71717a", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+        <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
           <Loader2 size={14} className="spin" /> Transcribing speech audio...
         </span>
       )}
