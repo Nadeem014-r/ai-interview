@@ -67,6 +67,59 @@ class DocumentChunker:
         return chunks
 
     @staticmethod
+    def chunk_lines(text: Optional[str], chunk_size: int = 200, overlap: int = 30) -> List[str]:
+        """
+        Pack whole lines into chunks of at most chunk_size words, keeping line breaks.
+
+        Unlike chunk_text, a chunk never starts or ends mid-sentence, so a section
+        heading stays with its content. A short heading-like line is carried into
+        the next chunk rather than left dangling at the end of the previous one.
+        Consecutive chunks share trailing lines totalling at most `overlap` words.
+        A single line longer than chunk_size falls back to chunk_text windows.
+        """
+        DocumentChunker.validate_chunk_params(chunk_size, overlap)
+        if text is None or not text.strip():
+            return []
+
+        lines: List[str] = []
+        for raw_line in text.splitlines():
+            line = " ".join(raw_line.split())
+            if not line:
+                continue
+            if len(line.split()) > chunk_size:
+                lines.extend(DocumentChunker.chunk_text(line, chunk_size=chunk_size, overlap=overlap))
+            else:
+                lines.append(line)
+
+        chunks: List[str] = []
+        current: List[str] = []
+        current_words = 0
+        for line in lines:
+            words = len(line.split())
+            if current and current_words + words > chunk_size:
+                carried: List[str] = []
+                if len(current) > 1 and len(current[-1].split()) <= 4:
+                    carried = [current.pop()]
+                chunks.append("\n".join(current))
+                tail: List[str] = []
+                tail_words = 0
+                for prev in reversed(current):
+                    n = len(prev.split())
+                    if tail_words + n > overlap:
+                        break
+                    tail.insert(0, prev)
+                    tail_words += n
+                current = tail + carried
+                current_words = sum(len(x.split()) for x in current)
+                while current and current_words + words > chunk_size:
+                    current_words -= len(current.pop(0).split())
+            current.append(line)
+            current_words += words
+        if current:
+            chunks.append("\n".join(current))
+        return chunks
+
+    @staticmethod
     def chunk_document(
         text: Optional[str],
         chunk_size: int = 500,

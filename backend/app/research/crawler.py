@@ -1,10 +1,11 @@
 import asyncio
 import hashlib
 import logging
+import re
 from typing import Dict, Any, Optional, List, Tuple
 from urllib.parse import urljoin, urlparse
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 
 from app.core.config import settings
 from app.research.security import (
@@ -16,6 +17,39 @@ from app.research.security import (
 )
 
 logger = logging.getLogger("ai_interviewer.research.crawler")
+
+# Short standalone headings that open a job-description section. Generic across
+# careers sites; used to locate the JD region of a page that also carries job
+# lists, navigation and other unrelated sections.
+_JD_SECTION_HEADING = re.compile(
+    r"(?:(?:minimum|preferred|basic|required|key|additional|desired)\s+)?"
+    r"(?:qualifications|requirements|responsibilities|skills(?:\s+and\s+experience)?)"
+    r"|about\s+(?:the|this)\s+(?:job|role|position|team|opportunity)"
+    r"|job\s+description|role\s+overview|what\s+you(?:'|’)?ll\s+do|what\s+you\s+will\s+do"
+    r"|who\s+you\s+are|what\s+we(?:'|’)?re\s+looking\s+for|nice\s+to\s+have"
+    r"|tech(?:nology|nical)?\s+stack|technologies",
+    re.IGNORECASE,
+)
+
+# Lines carrying legal/EEO/cookie boilerplate rather than role information.
+_BOILERPLATE_LINE = re.compile(
+    r"equal\s+opportunity|affirmative\s+action|all\s+rights\s+reserved|cookie"
+    r"|privacy\s+(?:policy|notice)|terms\s+of\s+(?:service|use)|agency\s+resumes"
+    r"|unsolicited\s+resumes|reasonable\s+accommodation|accommodations?\s+for\s+applicants",
+    re.IGNORECASE,
+)
+
+# Short page-control lines (share/apply buttons, icon ligature names) left behind
+# when a site renders controls as links or spans rather than <button>.
+_UI_CONTROL_LINE = re.compile(
+    r"(?:[a-z]+_)*[a-z]+_[a-z]+|apply(?:\s+now)?|share\b.*|.*copy\s+link|.*email\s+a\s+friend"
+    r"|save(?:\s+job)?|back\s+to\s+.*|sign\s+in|log\s+in",
+    re.IGNORECASE,
+)
+
+# Chrome whose markup identifies it as navigation, banners, dialogs or consent UI.
+_NOISE_ROLES = {"navigation", "banner", "contentinfo", "dialog", "alertdialog", "search"}
+_NOISE_ATTR = re.compile(r"cookie|consent|gdpr", re.IGNORECASE)
 
 class CrawlerError(Exception):
     """Base exception for crawler failures."""
@@ -81,23 +115,79 @@ class CompanyResearchCrawler:
         ]
         for tag in soup.find_all(noise_tags):
             tag.decompose()
+        for tag in soup.find_all(cls._is_noise_container):
+            if not tag.decomposed:
+                tag.decompose()
 
         # 3. Extract text preserving block separations
+        # Source-formatting line breaks inside a text node are not content breaks;
+        # collapsing them keeps a wrapped <p> as one line instead of fragments.
+        for text_node in soup.find_all(string=True):
+            if type(text_node) is NavigableString and ("\n" in text_node or "\r" in text_node):
+                text_node.replace_with(re.sub(r"\s+", " ", str(text_node)))
         # Add newlines for block elements
         for block in soup.find_all(["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr", "div", "section", "article"]):
+            block.insert(0, "\n")
             block.append("\n")
 
-        raw_text = soup.get_text()
+        # Narrow to the job-description region when the page clearly has one, so
+        # job lists and other sections sharing the page are not indexed with it.
+        raw_text = cls._find_jd_region(soup).get_text()
 
-        # 4. Normalize whitespace
+        # 4. Normalize whitespace and drop legal/cookie boilerplate lines
         lines = []
         for line in raw_text.split("\n"):
             cleaned_line = " ".join(line.split())
-            if cleaned_line:
-                lines.append(cleaned_line)
+            if not cleaned_line or _BOILERPLATE_LINE.search(cleaned_line):
+                continue
+            if len(cleaned_line.split()) <= 6 and _UI_CONTROL_LINE.fullmatch(cleaned_line):
+                continue
+            lines.append(cleaned_line)
 
         cleaned_text = "\n".join(lines).strip()
         return title, cleaned_text
+
+    @staticmethod
+    def _is_noise_container(tag) -> bool:
+        """Elements marked up as navigation/banner/dialog chrome or cookie-consent UI."""
+        if tag.attrs is None:
+            return False
+        if (tag.get("role") or "").lower() in _NOISE_ROLES:
+            return True
+        marker = " ".join([tag.get("id") or "", " ".join(tag.get("class") or [])])
+        return bool(marker.strip()) and bool(_NOISE_ATTR.search(marker))
+
+    @staticmethod
+    def _find_jd_region(soup):
+        """Return the smallest element containing every job-description section heading.
+
+        Requires at least two distinct headings (e.g. "Responsibilities" and
+        "Minimum qualifications") and a substantial amount of text; otherwise the
+        whole document is returned, which is the previous behaviour.
+        """
+        headings = []
+        for text_node in soup.find_all(string=True):
+            text = " ".join(str(text_node).split()).rstrip(":").strip()
+            if text and len(text) <= 60 and _JD_SECTION_HEADING.fullmatch(text) and text_node.parent is not None:
+                headings.append((text.lower(), text_node.parent))
+        if len({label for label, _ in headings}) < 2:
+            return soup
+
+        def ancestors(node):
+            chain = []
+            while node is not None:
+                chain.append(node)
+                node = node.parent
+            return chain
+
+        common = ancestors(headings[0][1])
+        for _, element in headings[1:]:
+            chain_ids = {id(n) for n in ancestors(element)}
+            common = [n for n in common if id(n) in chain_ids]
+        region = common[0] if common else soup
+        if len(region.get_text(" ").split()) < 40:
+            return soup
+        return region
 
     @classmethod
     def compute_content_hash(cls, text: str) -> str:

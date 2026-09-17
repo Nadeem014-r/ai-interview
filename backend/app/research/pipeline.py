@@ -186,7 +186,7 @@ class ResearchPipeline:
                 await self.db.refresh(doc)
 
             # Step 5: Chunk and Index with Rich Provenance Metadata
-            chunks = DocumentChunker.chunk_text(cleaned_text, chunk_size=200, overlap=30)
+            chunks = DocumentChunker.chunk_lines(cleaned_text, chunk_size=200, overlap=30)
             for idx, chunk_text in enumerate(chunks):
                 provenance_meta = {
                     "company_id": company_id,

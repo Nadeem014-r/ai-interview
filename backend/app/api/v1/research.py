@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 import logging
 
 from app.core.database import get_db
@@ -37,6 +37,10 @@ async def trigger_company_research(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="company_name cannot be blank.")
     if not req.role_title or not req.role_title.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="role_title cannot be blank.")
+    # Only a real, operator-supplied page is ingested. A guessed careers URL is
+    # not a source: at best it fails, at worst it indexes an unrelated page.
+    if not req.source_url or not req.source_url.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="source_url is required.")
 
     # 1. Lookup or create company
     stmt_c = select(Company).where(Company.name.ilike(f"%{req.company_name.strip()}%"))
@@ -52,11 +56,13 @@ async def trigger_company_research(
         await db.commit()
         await db.refresh(company)
 
-    # 2. Lookup or create role
+    # 2. Lookup or create role. Exact (case-insensitive) title match only: a
+    # substring match attached "Software Engineer" sources to whichever
+    # specialised role happened to come first, e.g. "Software Engineer (Backend)".
     stmt_r = select(Role).where(
         Role.company_id == company.id,
-        Role.title.ilike(f"%{req.role_title.strip()}%")
-    )
+        func.lower(func.trim(Role.title)) == req.role_title.strip().lower()
+    ).order_by(Role.id)
     res_r = await db.execute(stmt_r)
     role = res_r.scalars().first()
     if not role:
@@ -71,7 +77,7 @@ async def trigger_company_research(
         await db.commit()
         await db.refresh(role)
 
-    url = req.source_url or f"https://careers.{company.slug}.com/job/{role.id}"
+    url = req.source_url.strip()
 
     # 3. Execute Research Ingestion Pipeline
     pipeline = ResearchPipeline(db)

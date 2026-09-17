@@ -137,7 +137,12 @@ class Settings(BaseSettings):
     # model silently truncates the evaluation JSON and the turn falls back to
     # canned output.
     GEMINI_DEFAULT_MODEL: str = "gemini-3.5-flash-lite"
-    GEMINI_EMBEDDING_MODEL: str = "text-embedding-004"
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
+    # Minimum cosine similarity for a chunk to be used as question-generation
+    # context. Calibrated for gemini-embedding-001 with the JD-phrased query built
+    # in QuestionSelector: a role's own JD chunks scored 0.62-0.75, perks/legal
+    # boilerplate 0.48-0.54. Re-calibrate if the embedding model changes.
+    RAG_MIN_SIMILARITY: float = 0.60
     OPENAI_DEFAULT_MODEL: str = "gpt-4o-mini"
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
 

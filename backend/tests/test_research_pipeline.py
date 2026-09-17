@@ -785,7 +785,7 @@ async def test_api_role_authorization():
                 "content_hash": "dummyhash",
                 "chunks_count": 2
             }
-            res_admin = await client.post("/api/v1/research/company", json={"company_name": "Google", "role_title": "SWE"}, headers=admin_headers)
+            res_admin = await client.post("/api/v1/research/company", json={"company_name": "Google", "role_title": "SWE", "source_url": "https://careers.google.com/jobs/results/123"}, headers=admin_headers)
             assert res_admin.status_code == 200
             assert res_admin.json()["source_id"] == 99
 

@@ -177,11 +177,11 @@ class GeminiLLMProvider(LLMProvider):
 
 
 class GeminiEmbeddingProvider(EmbeddingProvider):
-    """Google Gemini embedding provider (text-embedding-004)."""
+    """Google Gemini embedding provider (gemini-embedding-001)."""
 
     def __init__(self, api_key: Optional[str] = None, default_model: Optional[str] = None):
         self.api_key = settings.GEMINI_API_KEY if api_key is None else api_key
-        self.default_model = default_model or settings.GEMINI_EMBEDDING_MODEL or "text-embedding-004"
+        self.default_model = default_model or settings.GEMINI_EMBEDDING_MODEL or "gemini-embedding-001"
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
 
     async def embed_text(self, text: str, model: Optional[str] = None) -> List[float]:
